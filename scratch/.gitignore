@@ -4,3 +4,5 @@
 !subdir/
 !scratch-simulator.cc
 !CMakeLists.txt
+!congestion-ddos.cc
+!ddos.cc
