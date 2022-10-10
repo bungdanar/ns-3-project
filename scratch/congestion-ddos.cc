@@ -99,15 +99,15 @@ main (int argc, char *argv[])
   NodeContainer botNodes;
   botNodes.Create (botNumbers);
 
-  PointToPointHelper p2pBot;
-  p2pBot.SetDeviceAttribute ("DataRate", globalDataRate);
-  p2pBot.SetChannelAttribute ("Delay", globalDelay);
+  PointToPointHelper ppBot;
+  ppBot.SetDeviceAttribute ("DataRate", globalDataRate);
+  ppBot.SetChannelAttribute ("Delay", globalDelay);
 
   // Install net device to bot nodes
   NetDeviceContainer botDevices[botNumbers];
   for (size_t i = 0; i < botNumbers; i++)
     {
-      botDevices[i] = p2pBot.Install (routerNodes.Get (0), botNodes.Get (i));
+      botDevices[i] = ppBot.Install (routerNodes.Get (0), botNodes.Get (i));
     }
 
   /*
@@ -150,6 +150,14 @@ main (int argc, char *argv[])
   address.SetBase ("10.1.5.0", "255.255.255.0");
   address.Assign (wifiStaDevices);
   address.Assign (wifiApDevices);
+
+  // For bots network
+  address.SetBase ("10.1.6.0", "255.255.255.252");
+  for (size_t i = 0; i < botNumbers; i++)
+    {
+      address.Assign (botDevices[i]);
+      address.NewNetwork ();
+    }
 
   return 0;
 }
