@@ -19,9 +19,9 @@ main (int argc, char *argv[])
 
   int nRouter = 3;
   int nServer = 1;
-  int nWiredclient = 10;
-  int nWifiSta = 10;
-  int nBot = 10;
+  int nWiredclient = 4;
+  int nWifiSta = 4;
+  int nBot = 4;
 
   int idxRouterForServer = 0;
   int idxRouterForWired = 1;
@@ -172,22 +172,24 @@ main (int argc, char *argv[])
 
   mobilityHelper.SetPositionAllocator ("ns3::GridPositionAllocator", "MinX", DoubleValue (0.0),
                                        "MinY", DoubleValue (0.0), "DeltaX", DoubleValue (5.0),
-                                       "DeltaY", DoubleValue (10.0), "GridWidth", UintegerValue (3),
+                                       "DeltaY", DoubleValue (10.0), "GridWidth", UintegerValue (5),
                                        "LayoutType", StringValue ("RowFirst"));
 
-  // wireless station nodes mobility
+  // Set constant for router, server, wired, wifiAp,and bot
+  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
+  mobilityHelper.Install (routerNodes);
+  mobilityHelper.Install (serverNode);
+  mobilityHelper.Install (wiredClientNodes);
+  mobilityHelper.Install (wifiApNode);
+  mobilityHelper.Install (botNodes);
+
+  // Set random walk for wifiSta
   mobilityHelper.SetMobilityModel ("ns3::RandomWalk2dMobilityModel", "Bounds",
                                    RectangleValue (Rectangle (-50, 50, -50, 50)));
   mobilityHelper.Install (wifiStaNodes);
 
-  // wireless ap node mobility
-  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobilityHelper.Install (wifiApNode);
-
-  // router nodes mobility
-  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobilityHelper.Install (routerNodes);
-
+  // Just some logging
+  // Delete this afterward
   cout << "n Router: " << routerNodes.GetN () << endl
        << "n Server: " << serverNode.GetN () << endl
        << "n Wired: " << wiredClientNodes.GetN () << endl
@@ -195,18 +197,37 @@ main (int argc, char *argv[])
        << "n Wireless Sta: " << wifiStaNodes.GetN () << endl
        << "n Bot: " << botNodes.GetN () << endl;
 
-  // // NetAnim
-  // AnimationInterface anim ("DDoSim.xml");
+  // NetAnim
+  AnimationInterface anim ("DDoSim.xml");
 
-  // uint32_t x_pos = 0;
-  // for (int l = 0; l < routerNodes.GetN (); ++l)
-  //   {
-  //     ns3::AnimationInterface::SetConstantPosition (routerNodes.Get (l), x_pos++, 30);
-  //   }
+  // Server position
+  AnimationInterface::SetConstantPosition (serverNode.Get (0), 0, 0);
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForServer), 10, 0);
 
-  //Run the Simulation
-  // Simulator::Run ();
-  // Simulator::Destroy ();
+  // Wired position
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWired), 20, 10);
+  int currXwired = 30;
+  for (size_t i = 1; i < wiredClientNodes.GetN (); i++)
+    {
+      AnimationInterface::SetConstantPosition (wiredClientNodes.Get (i), currXwired, 10);
+      currXwired += 10;
+    }
+
+  // Wireless position
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWireless), 20, 20);
+
+  // Bot position
+  int currXbot = 0;
+  for (size_t i = 0; i < botNodes.GetN (); i++)
+    {
+      AnimationInterface::SetConstantPosition (botNodes.Get (i), currXbot, 30);
+      currXbot++;
+    }
+
+  // Run the Simulation
+  Simulator::Stop (Seconds (10));
+  Simulator::Run ();
+  Simulator::Destroy ();
 
   return 0;
 }
