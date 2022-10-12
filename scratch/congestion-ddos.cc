@@ -7,6 +7,7 @@
 #include "ns3/mobility-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/netanim-module.h"
+#include "ns3/applications-module.h"
 
 using namespace std;
 using namespace ns3;
@@ -26,6 +27,11 @@ main (int argc, char *argv[])
   int idxRouterForServer = 0;
   int idxRouterForWired = 1;
   int idxRouterForWireless = 2;
+
+  int tcpSinkPort = 9000;
+  int udpSinkPort = 9001;
+  int maxBulkBytes = 100'000;
+  int maxSimulationTime = 10;
 
   // Routers
   NodeContainer routerNodes;
@@ -164,9 +170,6 @@ main (int argc, char *argv[])
       address.NewNetwork ();
     }
 
-  // Populate routing table
-  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
-
   // Set node mobility
   MobilityHelper mobilityHelper;
 
@@ -196,6 +199,44 @@ main (int argc, char *argv[])
        << "n Wireless Ap: " << wifiApNode.GetN () << endl
        << "n Wireless Sta: " << wifiStaNodes.GetN () << endl
        << "n Bot: " << botNodes.GetN () << endl;
+
+  // UDP sink on server side
+  PacketSinkHelper udpSink ("ns3::UdpSocketFactory",
+                            Address (InetSocketAddress (Ipv4Address::GetAny (), udpSinkPort)));
+  ApplicationContainer udpSinkApp = udpSink.Install (serverNode.Get (0));
+  udpSinkApp.Start (Seconds (0.0));
+  udpSinkApp.Stop (Seconds (maxSimulationTime));
+
+  // TCP sink on server side
+  PacketSinkHelper tcpSink ("ns3::TcpSocketFactory",
+                            InetSocketAddress (Ipv4Address::GetAny (), tcpSinkPort));
+  ApplicationContainer tcpSinkApp = tcpSink.Install (serverNode.Get (0));
+  tcpSinkApp.Start (Seconds (0.0));
+  tcpSinkApp.Stop (Seconds (maxSimulationTime));
+
+  // Build legitimate TCP sender application for wired and wireless
+  BulkSendHelper bulkSend ("ns3::TcpSocketFactory",
+                           InetSocketAddress (serverInterfaces.GetAddress (0), tcpSinkPort));
+  bulkSend.SetAttribute ("MaxBytes", UintegerValue (maxBulkBytes));
+
+  ApplicationContainer wiredBulkSendApps[nWiredclient];
+  for (size_t i = 1; i < wiredClientNodes.GetN (); i++)
+    {
+      wiredBulkSendApps[i] = bulkSend.Install (wiredClientNodes.Get (i));
+      wiredBulkSendApps[i].Start (Seconds (0.0));
+      wiredBulkSendApps[i].Stop (Seconds (maxSimulationTime));
+    }
+
+  ApplicationContainer wifiBulkSendApps[nWifiSta];
+  for (size_t i = 0; i < wifiStaNodes.GetN (); i++)
+    {
+      wifiBulkSendApps[i] = bulkSend.Install (wifiStaNodes.Get (i));
+      wifiBulkSendApps[i].Start (Seconds (0.0));
+      wifiBulkSendApps[i].Stop (Seconds (maxSimulationTime));
+    }
+
+  // Populate routing table
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
   // NetAnim
   AnimationInterface anim ("DDoSim.xml");
@@ -235,7 +276,7 @@ main (int argc, char *argv[])
     }
 
   // Run the Simulation
-  Simulator::Stop (Seconds (10));
+  Simulator::Stop (Seconds (maxSimulationTime));
   Simulator::Run ();
   Simulator::Destroy ();
 
