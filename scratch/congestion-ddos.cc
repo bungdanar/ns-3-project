@@ -1,3 +1,4 @@
+#include "iostream"
 #include "ns3/core-module.h"
 #include "ns3/csma-module.h"
 #include "ns3/point-to-point-module.h"
@@ -5,7 +6,9 @@
 #include "ns3/ssid.h"
 #include "ns3/mobility-module.h"
 #include "ns3/internet-module.h"
+#include "ns3/netanim-module.h"
 
+using namespace std;
 using namespace ns3;
 
 int
@@ -14,9 +17,19 @@ main (int argc, char *argv[])
   auto globalDataRate = StringValue ("100Mbps");
   auto globalDelay = StringValue ("1ms");
 
+  int nRouter = 3;
+  int nServer = 1;
+  int nWiredclient = 10;
+  int nWifiSta = 10;
+  int nBot = 10;
+
+  int idxRouterForServer = 0;
+  int idxRouterForWired = 1;
+  int idxRouterForWireless = 2;
+
   // Routers
   NodeContainer routerNodes;
-  routerNodes.Create (3);
+  routerNodes.Create (nRouter);
 
   PointToPointHelper ppR01, ppR02;
   ppR01.SetDeviceAttribute ("DataRate", globalDataRate);
@@ -26,27 +39,28 @@ main (int argc, char *argv[])
   ppR02.SetChannelAttribute ("Delay", globalDelay);
 
   NetDeviceContainer dR01, dR02;
-  dR01 = ppR01.Install (routerNodes.Get (0), routerNodes.Get (1));
-  dR02 = ppR02.Install (routerNodes.Get (0), routerNodes.Get (2));
+  dR01 = ppR01.Install (routerNodes.Get (idxRouterForServer), routerNodes.Get (idxRouterForWired));
+  dR02 =
+      ppR02.Install (routerNodes.Get (idxRouterForServer), routerNodes.Get (idxRouterForWireless));
 
   // Server
   NodeContainer serverNode;
-  serverNode.Create (1);
+  serverNode.Create (nServer);
 
   PointToPointHelper ppS0R0;
   ppS0R0.SetDeviceAttribute ("DataRate", globalDataRate);
   ppS0R0.SetChannelAttribute ("Delay", globalDelay);
 
   NetDeviceContainer dS0R0;
-  dS0R0 = ppS0R0.Install (serverNode.Get (0), routerNodes.Get (0));
+  dS0R0 = ppS0R0.Install (serverNode.Get (0), routerNodes.Get (idxRouterForServer));
 
   // Wired clients
   NodeContainer wiredClientNodes;
-  wiredClientNodes.Add (routerNodes.Get (1));
-  wiredClientNodes.Create (10);
+  wiredClientNodes.Add (routerNodes.Get (idxRouterForWired));
+  wiredClientNodes.Create (nWiredclient);
 
   CsmaHelper csma;
-  csma.SetDeviceAttribute ("DataRate", globalDataRate);
+  csma.SetChannelAttribute ("DataRate", globalDataRate);
   csma.SetChannelAttribute ("Delay", globalDelay);
 
   NetDeviceContainer csmaDevices;
@@ -54,8 +68,8 @@ main (int argc, char *argv[])
 
   // Wireless clients
   NodeContainer wifiStaNodes;
-  wifiStaNodes.Create (10);
-  NodeContainer wifiApNode = routerNodes.Get (2);
+  wifiStaNodes.Create (nWifiSta);
+  NodeContainer wifiApNode = routerNodes.Get (idxRouterForWireless);
 
   YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default ();
   YansWifiPhyHelper wifiPhysical;
@@ -77,37 +91,21 @@ main (int argc, char *argv[])
   wifiMac.SetType ("ns3::ApWifiMac", "Ssid", SsidValue (wifiSsid));
   wifiApDevices = wifi.Install (wifiPhysical, wifiMac, wifiApNode);
 
-  // Set wifi mobility
-  MobilityHelper mobilityHelper;
-
-  mobilityHelper.SetPositionAllocator ("ns3::GridPositionAllocator", "MinX", DoubleValue (0.0),
-                                       "MinY", DoubleValue (0.0), "DeltaX", DoubleValue (5.0),
-                                       "DeltaY", DoubleValue (10.0), "GridWidth", UintegerValue (3),
-                                       "LayoutType", StringValue ("RowFirst"));
-
-  mobilityHelper.SetMobilityModel ("ns3::RandomWalk2dMobilityModel", "Bounds",
-                                   RectangleValue (Rectangle (-50, 50, -50, 50)));
-  mobilityHelper.Install (wifiStaNodes);
-
-  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobilityHelper.Install (wifiApNode);
-
   /*
     Set bots topology using simple point-to-point (for now)
   */
-  int botNumbers = 50;
   NodeContainer botNodes;
-  botNodes.Create (botNumbers);
+  botNodes.Create (nBot);
 
   PointToPointHelper ppBot;
   ppBot.SetDeviceAttribute ("DataRate", globalDataRate);
   ppBot.SetChannelAttribute ("Delay", globalDelay);
 
   // Install net device to bot nodes
-  NetDeviceContainer botDevices[botNumbers];
-  for (size_t i = 0; i < botNumbers; i++)
+  NetDeviceContainer botDevices[nBot];
+  for (size_t i = 0; i < nBot; i++)
     {
-      botDevices[i] = ppBot.Install (routerNodes.Get (0), botNodes.Get (i));
+      botDevices[i] = ppBot.Install (routerNodes.Get (idxRouterForServer), botNodes.Get (i));
     }
 
   /*
@@ -115,9 +113,16 @@ main (int argc, char *argv[])
   */
   InternetStackHelper stack;
   stack.Install (routerNodes);
-  stack.Install (serverNode);
-  stack.Install (wiredClientNodes);
-  stack.Install (wifiApNode);
+  stack.Install (serverNode.Get (0));
+
+  for (size_t i = 1; i < wiredClientNodes.GetN (); i++)
+    {
+      stack.Install (wiredClientNodes.Get (i));
+    }
+
+  // No need because already installed in router section
+  // stack.Install (wifiApNode);
+
   stack.Install (wifiStaNodes);
   stack.Install (botNodes);
 
@@ -153,11 +158,55 @@ main (int argc, char *argv[])
 
   // For bots network
   address.SetBase ("10.1.6.0", "255.255.255.252");
-  for (size_t i = 0; i < botNumbers; i++)
+  for (size_t i = 0; i < nBot; i++)
     {
       address.Assign (botDevices[i]);
       address.NewNetwork ();
     }
+
+  // Populate routing table
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
+
+  // Set node mobility
+  MobilityHelper mobilityHelper;
+
+  mobilityHelper.SetPositionAllocator ("ns3::GridPositionAllocator", "MinX", DoubleValue (0.0),
+                                       "MinY", DoubleValue (0.0), "DeltaX", DoubleValue (5.0),
+                                       "DeltaY", DoubleValue (10.0), "GridWidth", UintegerValue (3),
+                                       "LayoutType", StringValue ("RowFirst"));
+
+  // wireless station nodes mobility
+  mobilityHelper.SetMobilityModel ("ns3::RandomWalk2dMobilityModel", "Bounds",
+                                   RectangleValue (Rectangle (-50, 50, -50, 50)));
+  mobilityHelper.Install (wifiStaNodes);
+
+  // wireless ap node mobility
+  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
+  mobilityHelper.Install (wifiApNode);
+
+  // router nodes mobility
+  mobilityHelper.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
+  mobilityHelper.Install (routerNodes);
+
+  cout << "n Router: " << routerNodes.GetN () << endl
+       << "n Server: " << serverNode.GetN () << endl
+       << "n Wired: " << wiredClientNodes.GetN () << endl
+       << "n Wireless Ap: " << wifiApNode.GetN () << endl
+       << "n Wireless Sta: " << wifiStaNodes.GetN () << endl
+       << "n Bot: " << botNodes.GetN () << endl;
+
+  // // NetAnim
+  // AnimationInterface anim ("DDoSim.xml");
+
+  // uint32_t x_pos = 0;
+  // for (int l = 0; l < routerNodes.GetN (); ++l)
+  //   {
+  //     ns3::AnimationInterface::SetConstantPosition (routerNodes.Get (l), x_pos++, 30);
+  //   }
+
+  //Run the Simulation
+  // Simulator::Run ();
+  // Simulator::Destroy ();
 
   return 0;
 }
