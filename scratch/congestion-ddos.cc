@@ -199,29 +199,39 @@ main (int argc, char *argv[])
 
   // NetAnim
   AnimationInterface anim ("DDoSim.xml");
+  const int yServer = 0;
+  const int yWired = 10;
+  const int yWifiAp = 20;
+  const int yBot = -20;
 
   // Server position
-  AnimationInterface::SetConstantPosition (serverNode.Get (0), 0, 0);
-  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForServer), 10, 0);
+  AnimationInterface::SetConstantPosition (serverNode.Get (0), 0, yServer);
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForServer), 10, yServer);
 
   // Wired position
-  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWired), 20, 10);
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWired), 20, yWired);
   int currXwired = 30;
   for (size_t i = 1; i < wiredClientNodes.GetN (); i++)
     {
-      AnimationInterface::SetConstantPosition (wiredClientNodes.Get (i), currXwired, 10);
+      AnimationInterface::SetConstantPosition (wiredClientNodes.Get (i), currXwired, yWired);
       currXwired += 10;
     }
 
   // Wireless position
-  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWireless), 20, 20);
+  AnimationInterface::SetConstantPosition (routerNodes.Get (idxRouterForWireless), 20, yWifiAp);
+  // int currXWifi = 30;
+  // for (size_t i = 0; i < wifiStaNodes.GetN (); i++)
+  //   {
+  //     AnimationInterface::SetConstantPosition (wifiStaNodes.Get (i), currXWifi, yWifiAp);
+  //     currXWifi += 5;
+  //   }
 
   // Bot position
   int currXbot = 0;
   for (size_t i = 0; i < botNodes.GetN (); i++)
     {
-      AnimationInterface::SetConstantPosition (botNodes.Get (i), currXbot, 30);
-      currXbot++;
+      AnimationInterface::SetConstantPosition (botNodes.Get (i), currXbot, yBot);
+      currXbot += 5;
     }
 
   // Run the Simulation
