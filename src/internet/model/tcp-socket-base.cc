@@ -19,8 +19,11 @@
  * Author: Adrian Sai-wah Tam <adrian.sw.tam@gmail.com>
  */
 
-#define NS_LOG_APPEND_CONTEXT \
-  if (m_node) { std::clog << " [node " << m_node->GetId () << "] "; }
+#define NS_LOG_APPEND_CONTEXT                             \
+  if (m_node)                                             \
+    {                                                     \
+      std::clog << " [node " << m_node->GetId () << "] "; \
+    }
 
 #include "ns3/abort.h"
 #include "ns3/node.h"
@@ -48,17 +51,12 @@
 #include "ipv4-end-point.h"
 #include "ipv6-end-point.h"
 #include "ipv6-l3-protocol.h"
-#include "tcp-tx-buffer.h"
-#include "tcp-rx-buffer.h"
-#include "rtt-estimator.h"
 #include "tcp-header.h"
 #include "tcp-option-winscale.h"
 #include "tcp-option-ts.h"
 #include "tcp-option-sack-permitted.h"
 #include "tcp-option-sack.h"
 #include "tcp-congestion-ops.h"
-#include "tcp-recovery-ops.h"
-#include "ns3/tcp-rate-ops.h"
 
 #include <math.h>
 #include <algorithm>
@@ -72,172 +70,113 @@ NS_OBJECT_ENSURE_REGISTERED (TcpSocketBase);
 TypeId
 TcpSocketBase::GetTypeId (void)
 {
-  static TypeId tid = TypeId ("ns3::TcpSocketBase")
-    .SetParent<TcpSocket> ()
-    .SetGroupName ("Internet")
-    .AddConstructor<TcpSocketBase> ()
-//    .AddAttribute ("TcpState", "State in TCP state machine",
-//                   TypeId::ATTR_GET,
-//                   EnumValue (CLOSED),
-//                   MakeEnumAccessor (&TcpSocketBase::m_state),
-//                   MakeEnumChecker (CLOSED, "Closed"))
-    .AddAttribute ("MaxSegLifetime",
-                   "Maximum segment lifetime in seconds, use for TIME_WAIT state transition to CLOSED state",
-                   DoubleValue (120), /* RFC793 says MSL=2 minutes*/
-                   MakeDoubleAccessor (&TcpSocketBase::m_msl),
-                   MakeDoubleChecker<double> (0))
-    .AddAttribute ("MaxWindowSize", "Max size of advertised window",
-                   UintegerValue (65535),
-                   MakeUintegerAccessor (&TcpSocketBase::m_maxWinSize),
-                   MakeUintegerChecker<uint16_t> ())
-    .AddAttribute ("IcmpCallback", "Callback invoked whenever an icmp error is received on this socket.",
-                   CallbackValue (),
-                   MakeCallbackAccessor (&TcpSocketBase::m_icmpCallback),
-                   MakeCallbackChecker ())
-    .AddAttribute ("IcmpCallback6", "Callback invoked whenever an icmpv6 error is received on this socket.",
-                   CallbackValue (),
-                   MakeCallbackAccessor (&TcpSocketBase::m_icmpCallback6),
-                   MakeCallbackChecker ())
-    .AddAttribute ("WindowScaling", "Enable or disable Window Scaling option",
-                   BooleanValue (true),
-                   MakeBooleanAccessor (&TcpSocketBase::m_winScalingEnabled),
-                   MakeBooleanChecker ())
-    .AddAttribute ("Sack", "Enable or disable Sack option",
-                   BooleanValue (true),
-                   MakeBooleanAccessor (&TcpSocketBase::m_sackEnabled),
-                   MakeBooleanChecker ())
-    .AddAttribute ("Timestamp", "Enable or disable Timestamp option",
-                   BooleanValue (true),
-                   MakeBooleanAccessor (&TcpSocketBase::m_timestampEnabled),
-                   MakeBooleanChecker ())
-    .AddAttribute ("MinRto",
-                   "Minimum retransmit timeout value",
-                   TimeValue (Seconds (1.0)), // RFC 6298 says min RTO=1 sec, but Linux uses 200ms.
-                   // See http://www.postel.org/pipermail/end2end-interest/2004-November/004402.html
-                   MakeTimeAccessor (&TcpSocketBase::SetMinRto,
-                                     &TcpSocketBase::GetMinRto),
-                   MakeTimeChecker ())
-    .AddAttribute ("ClockGranularity",
-                   "Clock Granularity used in RTO calculations",
-                   TimeValue (MilliSeconds (1)), // RFC6298 suggest to use fine clock granularity
-                   MakeTimeAccessor (&TcpSocketBase::SetClockGranularity,
-                                     &TcpSocketBase::GetClockGranularity),
-                   MakeTimeChecker ())
-    .AddAttribute ("TxBuffer",
-                   "TCP Tx buffer",
-                   PointerValue (),
-                   MakePointerAccessor (&TcpSocketBase::GetTxBuffer),
-                   MakePointerChecker<TcpTxBuffer> ())
-    .AddAttribute ("RxBuffer",
-                   "TCP Rx buffer",
-                   PointerValue (),
-                   MakePointerAccessor (&TcpSocketBase::GetRxBuffer),
-                   MakePointerChecker<TcpRxBuffer> ())
-    .AddAttribute ("CongestionOps",
-                   "Pointer to TcpCongestionOps object",
-                   PointerValue (),
-                   MakePointerAccessor (&TcpSocketBase::m_congestionControl),
-                   MakePointerChecker<TcpCongestionOps> ())
-    .AddAttribute ("ReTxThreshold", "Threshold for fast retransmit",
-                   UintegerValue (3),
-                   MakeUintegerAccessor (&TcpSocketBase::SetRetxThresh,
-                                         &TcpSocketBase::GetRetxThresh),
-                   MakeUintegerChecker<uint32_t> ())
-    .AddAttribute ("LimitedTransmit", "Enable limited transmit",
-                   BooleanValue (true),
-                   MakeBooleanAccessor (&TcpSocketBase::m_limitedTx),
-                   MakeBooleanChecker ())
-    .AddAttribute ("UseEcn", "Parameter to set ECN functionality",
-                   EnumValue (TcpSocketState::Off),
-                   MakeEnumAccessor (&TcpSocketBase::SetUseEcn),
-                   MakeEnumChecker (TcpSocketState::Off, "Off",
-                                    TcpSocketState::On, "On",
-                                    TcpSocketState::AcceptOnly, "AcceptOnly"))
-    .AddTraceSource ("RTO",
-                     "Retransmission timeout",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_rto),
-                     "ns3::TracedValueCallback::Time")
-    .AddTraceSource ("RTT",
-                     "Last RTT sample",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_lastRttTrace),
-                     "ns3::TracedValueCallback::Time")
-    .AddTraceSource ("NextTxSequence",
-                     "Next sequence number to send (SND.NXT)",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_nextTxSequenceTrace),
-                     "ns3::SequenceNumber32TracedValueCallback")
-    .AddTraceSource ("HighestSequence",
-                     "Highest sequence number ever sent in socket's life time",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_highTxMarkTrace),
-                     "ns3::TracedValueCallback::SequenceNumber32")
-    .AddTraceSource ("State",
-                     "TCP state",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_state),
-                     "ns3::TcpStatesTracedValueCallback")
-    .AddTraceSource ("CongState",
-                     "TCP Congestion machine state",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_congStateTrace),
-                     "ns3::TcpSocketState::TcpCongStatesTracedValueCallback")
-    .AddTraceSource ("EcnState",
-                     "Trace ECN state change of socket",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_ecnStateTrace),
-                     "ns3::TcpSocketState::EcnStatesTracedValueCallback")
-    .AddTraceSource ("AdvWND",
-                     "Advertised Window Size",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_advWnd),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("RWND",
-                     "Remote side's flow control window",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_rWnd),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("BytesInFlight",
-                     "Socket estimation of bytes in flight",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_bytesInFlightTrace),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("HighestRxSequence",
-                     "Highest sequence number received from peer",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_highRxMark),
-                     "ns3::TracedValueCallback::SequenceNumber32")
-    .AddTraceSource ("HighestRxAck",
-                     "Highest ack received from peer",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_highRxAckMark),
-                     "ns3::TracedValueCallback::SequenceNumber32")
-    .AddTraceSource ("PacingRate",
-                     "The current TCP pacing rate",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_pacingRateTrace),
-                     "ns3::TracedValueCallback::DataRate")
-    .AddTraceSource ("CongestionWindow",
-                     "The TCP connection's congestion window",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_cWndTrace),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("CongestionWindowInflated",
-                     "The TCP connection's congestion window inflates as in older RFC",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_cWndInflTrace),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("SlowStartThreshold",
-                     "TCP slow start threshold (bytes)",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_ssThTrace),
-                     "ns3::TracedValueCallback::Uint32")
-    .AddTraceSource ("Tx",
-                     "Send tcp packet to IP protocol",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_txTrace),
-                     "ns3::TcpSocketBase::TcpTxRxTracedCallback")
-    .AddTraceSource ("Rx",
-                     "Receive tcp packet from IP protocol",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_rxTrace),
-                     "ns3::TcpSocketBase::TcpTxRxTracedCallback")
-    .AddTraceSource ("EcnEchoSeq",
-                     "Sequence of last received ECN Echo",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_ecnEchoSeq),
-                     "ns3::SequenceNumber32TracedValueCallback")
-    .AddTraceSource ("EcnCeSeq",
-                     "Sequence of last received CE ",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_ecnCESeq),
-                     "ns3::SequenceNumber32TracedValueCallback")
-    .AddTraceSource ("EcnCwrSeq",
-                     "Sequence of last received CWR",
-                     MakeTraceSourceAccessor (&TcpSocketBase::m_ecnCWRSeq),
-                     "ns3::SequenceNumber32TracedValueCallback")
-  ;
+  static TypeId tid =
+      TypeId ("ns3::TcpSocketBase")
+          .SetParent<TcpSocket> ()
+          .SetGroupName ("Internet")
+          .AddConstructor<TcpSocketBase> ()
+          //    .AddAttribute ("TcpState", "State in TCP state machine",
+          //                   TypeId::ATTR_GET,
+          //                   EnumValue (CLOSED),
+          //                   MakeEnumAccessor (&TcpSocketBase::m_state),
+          //                   MakeEnumChecker (CLOSED, "Closed"))
+          .AddAttribute ("MaxSegLifetime",
+                         "Maximum segment lifetime in seconds, use for TIME_WAIT state transition "
+                         "to CLOSED state",
+                         DoubleValue (120), /* RFC793 says MSL=2 minutes*/
+                         MakeDoubleAccessor (&TcpSocketBase::m_msl), MakeDoubleChecker<double> (0))
+          .AddAttribute ("MaxWindowSize", "Max size of advertised window", UintegerValue (65535),
+                         MakeUintegerAccessor (&TcpSocketBase::m_maxWinSize),
+                         MakeUintegerChecker<uint16_t> ())
+          .AddAttribute ("IcmpCallback",
+                         "Callback invoked whenever an icmp error is received on this socket.",
+                         CallbackValue (), MakeCallbackAccessor (&TcpSocketBase::m_icmpCallback),
+                         MakeCallbackChecker ())
+          .AddAttribute ("IcmpCallback6",
+                         "Callback invoked whenever an icmpv6 error is received on this socket.",
+                         CallbackValue (), MakeCallbackAccessor (&TcpSocketBase::m_icmpCallback6),
+                         MakeCallbackChecker ())
+          .AddAttribute (
+              "WindowScaling", "Enable or disable Window Scaling option", BooleanValue (true),
+              MakeBooleanAccessor (&TcpSocketBase::m_winScalingEnabled), MakeBooleanChecker ())
+          .AddAttribute ("Sack", "Enable or disable Sack option", BooleanValue (true),
+                         MakeBooleanAccessor (&TcpSocketBase::m_sackEnabled), MakeBooleanChecker ())
+          .AddAttribute ("Timestamp", "Enable or disable Timestamp option", BooleanValue (true),
+                         MakeBooleanAccessor (&TcpSocketBase::m_timestampEnabled),
+                         MakeBooleanChecker ())
+          .AddAttribute (
+              "MinRto", "Minimum retransmit timeout value",
+              TimeValue (Seconds (1.0)), // RFC 6298 says min RTO=1 sec, but Linux uses 200ms.
+              // See http://www.postel.org/pipermail/end2end-interest/2004-November/004402.html
+              MakeTimeAccessor (&TcpSocketBase::SetMinRto, &TcpSocketBase::GetMinRto),
+              MakeTimeChecker ())
+          .AddAttribute (
+              "ClockGranularity", "Clock Granularity used in RTO calculations",
+              TimeValue (MilliSeconds (1)), // RFC6298 suggest to use fine clock granularity
+              MakeTimeAccessor (&TcpSocketBase::SetClockGranularity,
+                                &TcpSocketBase::GetClockGranularity),
+              MakeTimeChecker ())
+          .AddAttribute ("TxBuffer", "TCP Tx buffer", PointerValue (),
+                         MakePointerAccessor (&TcpSocketBase::GetTxBuffer),
+                         MakePointerChecker<TcpTxBuffer> ())
+          .AddAttribute ("RxBuffer", "TCP Rx buffer", PointerValue (),
+                         MakePointerAccessor (&TcpSocketBase::GetRxBuffer),
+                         MakePointerChecker<TcpRxBuffer> ())
+          .AddAttribute (
+              "ReTxThreshold", "Threshold for fast retransmit", UintegerValue (3),
+              MakeUintegerAccessor (&TcpSocketBase::SetRetxThresh, &TcpSocketBase::GetRetxThresh),
+              MakeUintegerChecker<uint32_t> ())
+          .AddAttribute ("LimitedTransmit", "Enable limited transmit", BooleanValue (true),
+                         MakeBooleanAccessor (&TcpSocketBase::m_limitedTx), MakeBooleanChecker ())
+          .AddTraceSource ("RTO", "Retransmission timeout",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_rto),
+                           "ns3::TracedValueCallback::Time")
+          .AddTraceSource ("RTT", "Last RTT sample",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_lastRttTrace),
+                           "ns3::TracedValueCallback::Time")
+          .AddTraceSource ("NextTxSequence", "Next sequence number to send (SND.NXT)",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_nextTxSequenceTrace),
+                           "ns3::SequenceNumber32TracedValueCallback")
+          .AddTraceSource ("HighestSequence",
+                           "Highest sequence number ever sent in socket's life time",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_highTxMarkTrace),
+                           "ns3::TracedValueCallback::SequenceNumber32")
+          .AddTraceSource ("State", "TCP state", MakeTraceSourceAccessor (&TcpSocketBase::m_state),
+                           "ns3::TcpStatesTracedValueCallback")
+          .AddTraceSource ("CongState", "TCP Congestion machine state",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_congStateTrace),
+                           "ns3::TcpSocketState::TcpCongStatesTracedValueCallback")
+          .AddTraceSource ("AdvWND", "Advertised Window Size",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_advWnd),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("RWND", "Remote side's flow control window",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_rWnd),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("BytesInFlight", "Socket estimation of bytes in flight",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_bytesInFlightTrace),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("HighestRxSequence", "Highest sequence number received from peer",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_highRxMark),
+                           "ns3::TracedValueCallback::SequenceNumber32")
+          .AddTraceSource ("HighestRxAck", "Highest ack received from peer",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_highRxAckMark),
+                           "ns3::TracedValueCallback::SequenceNumber32")
+          .AddTraceSource ("CongestionWindow", "The TCP connection's congestion window",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_cWndTrace),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("CongestionWindowInflated",
+                           "The TCP connection's congestion window inflates as in older RFC",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_cWndInfl),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("SlowStartThreshold", "TCP slow start threshold (bytes)",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_ssThTrace),
+                           "ns3::TracedValueCallback::Uint32")
+          .AddTraceSource ("Tx", "Send tcp packet to IP protocol",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_txTrace),
+                           "ns3::TcpSocketBase::TcpTxRxTracedCallback")
+          .AddTraceSource ("Rx", "Receive tcp packet from IP protocol",
+                           MakeTraceSourceAccessor (&TcpSocketBase::m_rxTrace),
+                           "ns3::TcpSocketBase::TcpTxRxTracedCallback");
   return tid;
 }
 
@@ -247,34 +186,108 @@ TcpSocketBase::GetInstanceTypeId () const
   return TcpSocketBase::GetTypeId ();
 }
 
-TcpSocketBase::TcpSocketBase (void)
-  : TcpSocket ()
+NS_OBJECT_ENSURE_REGISTERED (TcpSocketState);
+
+TypeId
+TcpSocketState::GetTypeId (void)
+{
+  static TypeId tid =
+      TypeId ("ns3::TcpSocketState")
+          .SetParent<Object> ()
+          .SetGroupName ("Internet")
+          .AddConstructor<TcpSocketState> ()
+          .AddAttribute ("EnablePacing", "Enable Pacing", BooleanValue (false),
+                         MakeBooleanAccessor (&TcpSocketState::m_pacing), MakeBooleanChecker ())
+          .AddAttribute ("MaxPacingRate", "Set Max Pacing Rate", DataRateValue (DataRate ("4Gb/s")),
+                         MakeDataRateAccessor (&TcpSocketState::m_maxPacingRate),
+                         MakeDataRateChecker ())
+          .AddTraceSource ("CongestionWindow", "The TCP connection's congestion window",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_cWnd),
+                           "ns3::TracedValue::Uint32Callback")
+          .AddTraceSource ("SlowStartThreshold", "TCP slow start threshold (bytes)",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_ssThresh),
+                           "ns3::TracedValue::Uint32Callback")
+          .AddTraceSource ("CongState", "TCP Congestion machine state",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_congState),
+                           "ns3::TracedValue::TcpCongStatesTracedValueCallback")
+          .AddTraceSource ("HighestSequence", "Highest sequence number received from peer",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_highTxMark),
+                           "ns3::SequenceNumber32TracedValueCallback")
+          .AddTraceSource ("NextTxSequence", "Next sequence number to send (SND.NXT)",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_nextTxSequence),
+                           "ns3::SequenceNumber32TracedValueCallback")
+          .AddTraceSource ("BytesInFlight", "The TCP connection's congestion window",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_bytesInFlight),
+                           "ns3::TracedValue::Uint32Callback")
+          .AddTraceSource ("RTT", "Last RTT sample",
+                           MakeTraceSourceAccessor (&TcpSocketState::m_lastRtt),
+                           "ns3::TracedValue::TimeCallback");
+  return tid;
+}
+
+TcpSocketState::TcpSocketState (const TcpSocketState &other)
+    : Object (other),
+      m_cWnd (other.m_cWnd),
+      m_ssThresh (other.m_ssThresh),
+      m_initialCWnd (other.m_initialCWnd),
+      m_initialSsThresh (other.m_initialSsThresh),
+      m_segmentSize (other.m_segmentSize),
+      m_lastAckedSeq (other.m_lastAckedSeq),
+      m_congState (other.m_congState),
+      m_highTxMark (other.m_highTxMark),
+      m_nextTxSequence (other.m_nextTxSequence),
+      m_rcvTimestampValue (other.m_rcvTimestampValue),
+      m_rcvTimestampEchoReply (other.m_rcvTimestampEchoReply),
+      m_pacing (other.m_pacing),
+      m_maxPacingRate (other.m_maxPacingRate),
+      m_currentPacingRate (other.m_currentPacingRate),
+      m_minRtt (other.m_minRtt),
+      m_bytesInFlight (other.m_bytesInFlight),
+      m_lastRtt (other.m_lastRtt),
+      m_delivered (other.m_delivered),
+      m_deliveredTime (other.m_deliveredTime),
+      m_firstSentTime (other.m_firstSentTime),
+      m_appLimited (other.m_appLimited),
+      m_txItemDelivered (other.m_txItemDelivered)
+{
+}
+
+const char *const TcpSocketState::TcpCongStateName[TcpSocketState::CA_LAST_STATE] = {
+    "CA_OPEN", "CA_DISORDER", "CA_CWR", "CA_RECOVERY", "CA_LOSS"};
+
+TcpSocketBase::TcpSocketBase (void) : TcpSocket ()
 {
   NS_LOG_FUNCTION (this);
+  totalDupAcks = 0;
+  receivedPktsSizePerSec = 0;
+  totalReceivedPktsSize = 0;
+  actualReceivedPktsSizePerSec = 0;
+  totalActualReceivedPktsSize = 0;
+  prevThroughput = 0;
+  prevGoodput = 0;
+  actualSentPktsPerSec = 0;
+  totalActualSentPkts = 0;
+  reTxPktsPerSec = 0;
+  totalReTxPkts = 0;
+  actualSentPktsPerSecSize = 0;
+  totalActualSentPktsSize = 0;
+  reTxPktsPerSecSize = 0;
+  totalReTxPktsSize = 0;
+  m_rxBuffer = CreateObject<TcpRxBuffer> ();
   m_txBuffer = CreateObject<TcpTxBuffer> ();
-  m_txBuffer->SetRWndCallback (MakeCallback (&TcpSocketBase::GetRWnd, this));
-  m_tcb      = CreateObject<TcpSocketState> ();
-  m_rateOps  = CreateObject <TcpRateLinux> ();
+  m_tcb = CreateObject<TcpSocketState> ();
 
-  m_tcb->m_rxBuffer = CreateObject<TcpRxBuffer> ();
+  m_txBuffer->SetTcpSocketState (m_tcb);
 
-  m_tcb->m_pacingRate = m_tcb->m_maxPacingRate;
+  m_tcb->m_currentPacingRate = m_tcb->m_maxPacingRate;
   m_pacingTimer.SetFunction (&TcpSocketBase::NotifyPacingPerformed, this);
-
-  m_tcb->m_sendEmptyPacketCallback = MakeCallback (&TcpSocketBase::SendEmptyPacket, this);
+  //calculateThroughputTimer.SetFunction (&TcpSocketBase::CalculateThroughputPerSecond, this);
+  //calculateThroughputTimer.Schedule(Seconds(1.0));
 
   bool ok;
 
-  ok = m_tcb->TraceConnectWithoutContext ("PacingRate",
-                                          MakeCallback (&TcpSocketBase::UpdatePacingRateTrace, this));
-  NS_ASSERT (ok == true);
-
   ok = m_tcb->TraceConnectWithoutContext ("CongestionWindow",
                                           MakeCallback (&TcpSocketBase::UpdateCwnd, this));
-  NS_ASSERT (ok == true);
-
-  ok = m_tcb->TraceConnectWithoutContext ("CongestionWindowInflated",
-                                          MakeCallback (&TcpSocketBase::UpdateCwndInfl, this));
   NS_ASSERT (ok == true);
 
   ok = m_tcb->TraceConnectWithoutContext ("SlowStartThreshold",
@@ -285,12 +298,8 @@ TcpSocketBase::TcpSocketBase (void)
                                           MakeCallback (&TcpSocketBase::UpdateCongState, this));
   NS_ASSERT (ok == true);
 
-  ok = m_tcb->TraceConnectWithoutContext ("EcnState",
-                                          MakeCallback (&TcpSocketBase::UpdateEcnState, this));
-  NS_ASSERT (ok == true);
-
-  ok = m_tcb->TraceConnectWithoutContext ("NextTxSequence",
-                                          MakeCallback (&TcpSocketBase::UpdateNextTxSequence, this));
+  ok = m_tcb->TraceConnectWithoutContext (
+      "NextTxSequence", MakeCallback (&TcpSocketBase::UpdateNextTxSequence, this));
   NS_ASSERT (ok == true);
 
   ok = m_tcb->TraceConnectWithoutContext ("HighestSequence",
@@ -301,62 +310,72 @@ TcpSocketBase::TcpSocketBase (void)
                                           MakeCallback (&TcpSocketBase::UpdateBytesInFlight, this));
   NS_ASSERT (ok == true);
 
-  ok = m_tcb->TraceConnectWithoutContext ("RTT",
-                                          MakeCallback (&TcpSocketBase::UpdateRtt, this));
+  ok = m_tcb->TraceConnectWithoutContext ("RTT", MakeCallback (&TcpSocketBase::UpdateRtt, this));
   NS_ASSERT (ok == true);
 }
 
-TcpSocketBase::TcpSocketBase (const TcpSocketBase& sock)
-  : TcpSocket (sock),
-    //copy object::m_tid and socket::callbacks
-    m_dupAckCount (sock.m_dupAckCount),
-    m_delAckCount (0),
-    m_delAckMaxCount (sock.m_delAckMaxCount),
-    m_noDelay (sock.m_noDelay),
-    m_synCount (sock.m_synCount),
-    m_synRetries (sock.m_synRetries),
-    m_dataRetrCount (sock.m_dataRetrCount),
-    m_dataRetries (sock.m_dataRetries),
-    m_rto (sock.m_rto),
-    m_minRto (sock.m_minRto),
-    m_clockGranularity (sock.m_clockGranularity),
-    m_delAckTimeout (sock.m_delAckTimeout),
-    m_persistTimeout (sock.m_persistTimeout),
-    m_cnTimeout (sock.m_cnTimeout),
-    m_endPoint (nullptr),
-    m_endPoint6 (nullptr),
-    m_node (sock.m_node),
-    m_tcp (sock.m_tcp),
-    m_state (sock.m_state),
-    m_errno (sock.m_errno),
-    m_closeNotified (sock.m_closeNotified),
-    m_closeOnEmpty (sock.m_closeOnEmpty),
-    m_shutdownSend (sock.m_shutdownSend),
-    m_shutdownRecv (sock.m_shutdownRecv),
-    m_connected (sock.m_connected),
-    m_msl (sock.m_msl),
-    m_maxWinSize (sock.m_maxWinSize),
-    m_bytesAckedNotProcessed (sock.m_bytesAckedNotProcessed),
-    m_rWnd (sock.m_rWnd),
-    m_highRxMark (sock.m_highRxMark),
-    m_highRxAckMark (sock.m_highRxAckMark),
-    m_sackEnabled (sock.m_sackEnabled),
-    m_winScalingEnabled (sock.m_winScalingEnabled),
-    m_rcvWindShift (sock.m_rcvWindShift),
-    m_sndWindShift (sock.m_sndWindShift),
-    m_timestampEnabled (sock.m_timestampEnabled),
-    m_timestampToEcho (sock.m_timestampToEcho),
-    m_recover (sock.m_recover),
-    m_recoverActive (sock.m_recoverActive),
-    m_retxThresh (sock.m_retxThresh),
-    m_limitedTx (sock.m_limitedTx),
-    m_isFirstPartialAck (sock.m_isFirstPartialAck),
-    m_txTrace (sock.m_txTrace),
-    m_rxTrace (sock.m_rxTrace),
-    m_pacingTimer (Timer::CANCEL_ON_DESTROY),
-    m_ecnEchoSeq (sock.m_ecnEchoSeq),
-    m_ecnCESeq (sock.m_ecnCESeq),
-    m_ecnCWRSeq (sock.m_ecnCWRSeq)
+TcpSocketBase::TcpSocketBase (const TcpSocketBase &sock)
+    : TcpSocket (sock),
+      //copy object::m_tid and socket::callbacks
+      totalDupAcks (0),
+      receivedPktsSizePerSec (0),
+      totalReceivedPktsSize (0),
+      actualReceivedPktsSizePerSec (0),
+      totalActualReceivedPktsSize (0),
+      prevThroughput (0),
+      prevGoodput (0),
+      actualSentPktsPerSec (0),
+      totalActualSentPkts (0),
+      reTxPktsPerSec (0),
+      totalReTxPkts (0),
+      actualSentPktsPerSecSize (0),
+      totalActualSentPktsSize (0),
+      reTxPktsPerSecSize (0),
+      totalReTxPktsSize (0),
+      m_dupAckCount (sock.m_dupAckCount),
+      m_delAckCount (0),
+      m_delAckMaxCount (sock.m_delAckMaxCount),
+      m_noDelay (sock.m_noDelay),
+      m_synCount (sock.m_synCount),
+      m_synRetries (sock.m_synRetries),
+      m_dataRetrCount (sock.m_dataRetrCount),
+      m_dataRetries (sock.m_dataRetries),
+      m_rto (sock.m_rto),
+      m_minRto (sock.m_minRto),
+      m_clockGranularity (sock.m_clockGranularity),
+      m_delAckTimeout (sock.m_delAckTimeout),
+      m_persistTimeout (sock.m_persistTimeout),
+      m_cnTimeout (sock.m_cnTimeout),
+      m_endPoint (nullptr),
+      m_endPoint6 (nullptr),
+      m_node (sock.m_node),
+      m_tcp (sock.m_tcp),
+      m_state (sock.m_state),
+      m_errno (sock.m_errno),
+      m_closeNotified (sock.m_closeNotified),
+      m_closeOnEmpty (sock.m_closeOnEmpty),
+      m_shutdownSend (sock.m_shutdownSend),
+      m_shutdownRecv (sock.m_shutdownRecv),
+      m_connected (sock.m_connected),
+      m_msl (sock.m_msl),
+      m_maxWinSize (sock.m_maxWinSize),
+      m_bytesAckedNotProcessed (sock.m_bytesAckedNotProcessed),
+      m_rWnd (sock.m_rWnd),
+      m_highRxMark (sock.m_highRxMark),
+      m_highRxAckMark (sock.m_highRxAckMark),
+      m_sackEnabled (sock.m_sackEnabled),
+      m_winScalingEnabled (sock.m_winScalingEnabled),
+      m_rcvWindShift (sock.m_rcvWindShift),
+      m_sndWindShift (sock.m_sndWindShift),
+      m_timestampEnabled (sock.m_timestampEnabled),
+      m_timestampToEcho (sock.m_timestampToEcho),
+      m_recover (sock.m_recover),
+      m_retxThresh (sock.m_retxThresh),
+      m_limitedTx (sock.m_limitedTx),
+      m_isFirstPartialAck (sock.m_isFirstPartialAck),
+      m_txTrace (sock.m_txTrace),
+      m_rxTrace (sock.m_rxTrace),
+      m_pacingTimer (Timer::REMOVE_ON_DESTROY)
 {
   NS_LOG_FUNCTION (this);
   NS_LOG_LOGIC ("Invoked the copy constructor");
@@ -366,49 +385,38 @@ TcpSocketBase::TcpSocketBase (const TcpSocketBase& sock)
       m_rtt = sock.m_rtt->Copy ();
     }
   // Reset all callbacks to null
-  Callback<void, Ptr< Socket > > vPS = MakeNullCallback<void, Ptr<Socket> > ();
-  Callback<void, Ptr<Socket>, const Address &> vPSA = MakeNullCallback<void, Ptr<Socket>, const Address &> ();
+  Callback<void, Ptr<Socket>> vPS = MakeNullCallback<void, Ptr<Socket>> ();
+  Callback<void, Ptr<Socket>, const Address &> vPSA =
+      MakeNullCallback<void, Ptr<Socket>, const Address &> ();
   Callback<void, Ptr<Socket>, uint32_t> vPSUI = MakeNullCallback<void, Ptr<Socket>, uint32_t> ();
   SetConnectCallback (vPS, vPS);
   SetDataSentCallback (vPSUI);
   SetSendCallback (vPSUI);
   SetRecvCallback (vPS);
   m_txBuffer = CopyObject (sock.m_txBuffer);
-  m_txBuffer->SetRWndCallback (MakeCallback (&TcpSocketBase::GetRWnd, this));
+  m_rxBuffer = CopyObject (sock.m_rxBuffer);
   m_tcb = CopyObject (sock.m_tcb);
-  m_tcb->m_rxBuffer = CopyObject (sock.m_tcb->m_rxBuffer);
 
-  m_tcb->m_pacingRate = m_tcb->m_maxPacingRate;
+  m_txBuffer->SetTcpSocketState (m_tcb);
+
+  m_tcb->m_currentPacingRate = m_tcb->m_maxPacingRate;
   m_pacingTimer.SetFunction (&TcpSocketBase::NotifyPacingPerformed, this);
+
+  //calculateThroughputTimer.SetFunction (&TcpSocketBase::CalculateThroughputPerSecond, this);
+  //calculateThroughputTimer.Schedule(Seconds(1.0));
 
   if (sock.m_congestionControl)
     {
       m_congestionControl = sock.m_congestionControl->Fork ();
-      m_congestionControl->Init (m_tcb);
-    }
 
-  if (sock.m_recoveryOps)
-    {
-      m_recoveryOps = sock.m_recoveryOps->Fork ();
-    }
-
-  m_rateOps = CreateObject <TcpRateLinux> ();
-  if (m_tcb->m_sendEmptyPacketCallback.IsNull ())
-    {
-      m_tcb->m_sendEmptyPacketCallback = MakeCallback (&TcpSocketBase::SendEmptyPacket, this);
+      //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation
+      //m_congestionControl->SetNode(m_node);
     }
 
   bool ok;
 
-  ok = m_tcb->TraceConnectWithoutContext ("PacingRate",
-                                          MakeCallback (&TcpSocketBase::UpdatePacingRateTrace, this));
-
   ok = m_tcb->TraceConnectWithoutContext ("CongestionWindow",
                                           MakeCallback (&TcpSocketBase::UpdateCwnd, this));
-  NS_ASSERT (ok == true);
-
-  ok = m_tcb->TraceConnectWithoutContext ("CongestionWindowInflated",
-                                          MakeCallback (&TcpSocketBase::UpdateCwndInfl, this));
   NS_ASSERT (ok == true);
 
   ok = m_tcb->TraceConnectWithoutContext ("SlowStartThreshold",
@@ -419,12 +427,8 @@ TcpSocketBase::TcpSocketBase (const TcpSocketBase& sock)
                                           MakeCallback (&TcpSocketBase::UpdateCongState, this));
   NS_ASSERT (ok == true);
 
-  ok = m_tcb->TraceConnectWithoutContext ("EcnState",
-                                          MakeCallback (&TcpSocketBase::UpdateEcnState, this));
-  NS_ASSERT (ok == true);
-
-  ok = m_tcb->TraceConnectWithoutContext ("NextTxSequence",
-                                          MakeCallback (&TcpSocketBase::UpdateNextTxSequence, this));
+  ok = m_tcb->TraceConnectWithoutContext (
+      "NextTxSequence", MakeCallback (&TcpSocketBase::UpdateNextTxSequence, this));
   NS_ASSERT (ok == true);
 
   ok = m_tcb->TraceConnectWithoutContext ("HighestSequence",
@@ -435,8 +439,7 @@ TcpSocketBase::TcpSocketBase (const TcpSocketBase& sock)
                                           MakeCallback (&TcpSocketBase::UpdateBytesInFlight, this));
   NS_ASSERT (ok == true);
 
-  ok = m_tcb->TraceConnectWithoutContext ("RTT",
-                                          MakeCallback (&TcpSocketBase::UpdateRtt, this));
+  ok = m_tcb->TraceConnectWithoutContext ("RTT", MakeCallback (&TcpSocketBase::UpdateRtt, this));
   NS_ASSERT (ok == true);
 }
 
@@ -450,7 +453,7 @@ TcpSocketBase::~TcpSocketBase (void)
       /*
        * Upon Bind, an Ipv4Endpoint is allocated and set to m_endPoint, and
        * DestroyCallback is set to TcpSocketBase::Destroy. If we called
-       * m_tcp->DeAllocate, it will destroy its Ipv4EndpointDemux::DeAllocate,
+       * m_tcp->DeAllocate, it wil destroy its Ipv4EndpointDemux::DeAllocate,
        * which in turn destroys my m_endPoint, and in turn invokes
        * TcpSocketBase::Destroy to nullify m_node, m_endPoint, and m_tcp.
        */
@@ -620,8 +623,9 @@ TcpSocketBase::Bind (const Address &address)
 void
 TcpSocketBase::SetInitialSSThresh (uint32_t threshold)
 {
-  NS_ABORT_MSG_UNLESS ( (m_state == CLOSED) || threshold == m_tcb->m_initialSsThresh,
-                        "TcpSocketBase::SetSSThresh() cannot change initial ssThresh after connection started.");
+  NS_ABORT_MSG_UNLESS (
+      (m_state == CLOSED) || threshold == m_tcb->m_initialSsThresh,
+      "TcpSocketBase::SetSSThresh() cannot change initial ssThresh after connection started.");
 
   m_tcb->m_initialSsThresh = threshold;
 }
@@ -635,8 +639,9 @@ TcpSocketBase::GetInitialSSThresh (void) const
 void
 TcpSocketBase::SetInitialCwnd (uint32_t cwnd)
 {
-  NS_ABORT_MSG_UNLESS ( (m_state == CLOSED) || cwnd == m_tcb->m_initialCWnd,
-                        "TcpSocketBase::SetInitialCwnd() cannot change initial cwnd after connection started.");
+  NS_ABORT_MSG_UNLESS (
+      (m_state == CLOSED) || cwnd == m_tcb->m_initialCWnd,
+      "TcpSocketBase::SetInitialCwnd() cannot change initial cwnd after connection started.");
 
   m_tcb->m_initialCWnd = cwnd;
 }
@@ -649,7 +654,7 @@ TcpSocketBase::GetInitialCwnd (void) const
 
 /* Inherit from Socket class: Initiate connection to a remote address:port */
 int
-TcpSocketBase::Connect (const Address & address)
+TcpSocketBase::Connect (const Address &address)
 {
   NS_LOG_FUNCTION (this << address);
 
@@ -749,10 +754,10 @@ TcpSocketBase::Close (void)
   /// \internal
   /// First we check to see if there is any unread rx data.
   /// \bugid{426} claims we should send reset in this case.
-  if (m_tcb->m_rxBuffer->Size () != 0)
+  if (m_rxBuffer->Size () != 0)
     {
-      NS_LOG_WARN ("Socket " << this << " << unread rx data during close.  Sending reset." <<
-                   "This is probably due to a bad sink application; check its code");
+      NS_LOG_WARN ("Socket " << this << " << unread rx data during close.  Sending reset."
+                             << "This is probably due to a bad sink application; check its code");
       SendRST ();
       return 0;
     }
@@ -784,7 +789,7 @@ TcpSocketBase::ShutdownSend (void)
     {
       if (m_state == ESTABLISHED || m_state == CLOSE_WAIT)
         {
-          NS_LOG_INFO ("Empty tx buffer, send fin");
+          NS_LOG_INFO ("Emtpy tx buffer, send fin");
           SendEmptyPacket (TcpHeader::FIN);
 
           if (m_state == ESTABLISHED)
@@ -832,11 +837,6 @@ TcpSocketBase::Send (Ptr<Packet> p, uint32_t flags)
           m_errno = ERROR_SHUTDOWN;
           return -1;
         }
-
-      m_rateOps->CalculateAppLimited(m_tcb->m_cWnd, m_tcb->m_bytesInFlight, m_tcb->m_segmentSize,
-                                     m_txBuffer->TailSequence (), m_tcb->m_nextTxSequence,
-                                     m_txBuffer->GetLost (), m_txBuffer->GetRetransmitsCount ());
-
       // Submit the data to lower layers
       NS_LOG_LOGIC ("txBufSize=" << m_txBuffer->Size () << " state " << TcpStateName[m_state]);
       if ((m_state == ESTABLISHED || m_state == CLOSE_WAIT) && AvailableWindow () > 0)
@@ -844,9 +844,8 @@ TcpSocketBase::Send (Ptr<Packet> p, uint32_t flags)
           // to fill the buffer
           if (!m_sendPendingDataEvent.IsRunning ())
             {
-              m_sendPendingDataEvent = Simulator::Schedule (TimeStep (1),
-                                                            &TcpSocketBase::SendPendingData,
-                                                            this, m_connected);
+              m_sendPendingDataEvent = Simulator::Schedule (
+                  TimeStep (1), &TcpSocketBase::SendPendingData, this, m_connected);
             }
         }
       return p->GetSize ();
@@ -860,8 +859,9 @@ TcpSocketBase::Send (Ptr<Packet> p, uint32_t flags)
 
 /* Inherit from Socket class: In TcpSocketBase, it is same as Send() call */
 int
-TcpSocketBase::SendTo (Ptr<Packet> p, uint32_t flags, [[maybe_unused]] const Address &address)
+TcpSocketBase::SendTo (Ptr<Packet> p, uint32_t flags, const Address &address)
 {
+  NS_UNUSED (address);
   return Send (p, flags); // SendTo() and Send() are the same
 }
 
@@ -872,11 +872,12 @@ TcpSocketBase::Recv (uint32_t maxSize, uint32_t flags)
 {
   NS_LOG_FUNCTION (this);
   NS_ABORT_MSG_IF (flags, "use of flags is not supported in TcpSocketBase::Recv()");
-  if (m_tcb->m_rxBuffer->Size () == 0 && m_state == CLOSE_WAIT)
+  if (m_rxBuffer->Size () == 0 && m_state == CLOSE_WAIT)
     {
       return Create<Packet> (); // Send EOF on connection close
     }
-  Ptr<Packet> outPacket = m_tcb->m_rxBuffer->Extract (maxSize);
+  Ptr<Packet> outPacket = m_rxBuffer->Extract (maxSize);
+
   return outPacket;
 }
 
@@ -891,11 +892,13 @@ TcpSocketBase::RecvFrom (uint32_t maxSize, uint32_t flags, Address &fromAddress)
     {
       if (m_endPoint != nullptr)
         {
-          fromAddress = InetSocketAddress (m_endPoint->GetPeerAddress (), m_endPoint->GetPeerPort ());
+          fromAddress =
+              InetSocketAddress (m_endPoint->GetPeerAddress (), m_endPoint->GetPeerPort ());
         }
       else if (m_endPoint6 != nullptr)
         {
-          fromAddress = Inet6SocketAddress (m_endPoint6->GetPeerAddress (), m_endPoint6->GetPeerPort ());
+          fromAddress =
+              Inet6SocketAddress (m_endPoint6->GetPeerAddress (), m_endPoint6->GetPeerPort ());
         }
       else
         {
@@ -918,7 +921,7 @@ uint32_t
 TcpSocketBase::GetRxAvailable (void) const
 {
   NS_LOG_FUNCTION (this);
-  return m_tcb->m_rxBuffer->Available ();
+  return m_rxBuffer->Available ();
 }
 
 /* Inherit from Socket class: Return local address:port */
@@ -956,13 +959,11 @@ TcpSocketBase::GetPeerName (Address &address) const
 
   if (m_endPoint)
     {
-      address = InetSocketAddress (m_endPoint->GetPeerAddress (),
-                                   m_endPoint->GetPeerPort ());
+      address = InetSocketAddress (m_endPoint->GetPeerAddress (), m_endPoint->GetPeerPort ());
     }
   else if (m_endPoint6)
     {
-      address = Inet6SocketAddress (m_endPoint6->GetPeerAddress (),
-                                    m_endPoint6->GetPeerPort ());
+      address = Inet6SocketAddress (m_endPoint6->GetPeerAddress (), m_endPoint6->GetPeerPort ());
     }
   else
     {
@@ -1003,15 +1004,21 @@ TcpSocketBase::SetupCallback (void)
     }
   if (m_endPoint != nullptr)
     {
-      m_endPoint->SetRxCallback (MakeCallback (&TcpSocketBase::ForwardUp, Ptr<TcpSocketBase> (this)));
-      m_endPoint->SetIcmpCallback (MakeCallback (&TcpSocketBase::ForwardIcmp, Ptr<TcpSocketBase> (this)));
-      m_endPoint->SetDestroyCallback (MakeCallback (&TcpSocketBase::Destroy, Ptr<TcpSocketBase> (this)));
+      m_endPoint->SetRxCallback (
+          MakeCallback (&TcpSocketBase::ForwardUp, Ptr<TcpSocketBase> (this)));
+      m_endPoint->SetIcmpCallback (
+          MakeCallback (&TcpSocketBase::ForwardIcmp, Ptr<TcpSocketBase> (this)));
+      m_endPoint->SetDestroyCallback (
+          MakeCallback (&TcpSocketBase::Destroy, Ptr<TcpSocketBase> (this)));
     }
   if (m_endPoint6 != nullptr)
     {
-      m_endPoint6->SetRxCallback (MakeCallback (&TcpSocketBase::ForwardUp6, Ptr<TcpSocketBase> (this)));
-      m_endPoint6->SetIcmpCallback (MakeCallback (&TcpSocketBase::ForwardIcmp6, Ptr<TcpSocketBase> (this)));
-      m_endPoint6->SetDestroyCallback (MakeCallback (&TcpSocketBase::Destroy6, Ptr<TcpSocketBase> (this)));
+      m_endPoint6->SetRxCallback (
+          MakeCallback (&TcpSocketBase::ForwardUp6, Ptr<TcpSocketBase> (this)));
+      m_endPoint6->SetIcmpCallback (
+          MakeCallback (&TcpSocketBase::ForwardIcmp6, Ptr<TcpSocketBase> (this)));
+      m_endPoint6->SetDestroyCallback (
+          MakeCallback (&TcpSocketBase::Destroy6, Ptr<TcpSocketBase> (this)));
     }
 
   return 0;
@@ -1024,20 +1031,12 @@ TcpSocketBase::DoConnect (void)
   NS_LOG_FUNCTION (this);
 
   // A new connection is allowed only if this socket does not have a connection
-  if (m_state == CLOSED || m_state == LISTEN || m_state == SYN_SENT || m_state == LAST_ACK || m_state == CLOSE_WAIT)
+  if (m_state == CLOSED || m_state == LISTEN || m_state == SYN_SENT || m_state == LAST_ACK ||
+      m_state == CLOSE_WAIT)
     { // send a SYN packet and change state into SYN_SENT
-      // send a SYN packet with ECE and CWR flags set if sender is ECN capable
-      if (m_tcb->m_useEcn == TcpSocketState::On)
-        {
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ECE | TcpHeader::CWR);
-        }
-      else
-        {
-          SendEmptyPacket (TcpHeader::SYN);
-        }
+      SendEmptyPacket (TcpHeader::SYN);
       NS_LOG_DEBUG (TcpStateName[m_state] << " -> SYN_SENT");
       m_state = SYN_SENT;
-      m_tcb->m_ecnState = TcpSocketState::ECN_DISABLED;    // because sender is not yet aware about receiver's ECN capability
     }
   else if (m_state != TIME_WAIT)
     { // In states SYN_RCVD, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, and CLOSING, an connection
@@ -1076,16 +1075,16 @@ TcpSocketBase::DoClose (void)
       CloseAndNotify ();
       break;
     case LISTEN:
-      // In this state, move to CLOSED and tear down the end point
+    case LAST_ACK:
+      // In these three states, move to CLOSED and tear down the end point
       CloseAndNotify ();
       break;
-    case LAST_ACK:
     case CLOSED:
     case FIN_WAIT_1:
     case FIN_WAIT_2:
     case TIME_WAIT:
     default: /* mute compiler */
-      // Do nothing in these five states
+      // Do nothing in these four states
       break;
     }
   return 0;
@@ -1102,15 +1101,11 @@ TcpSocketBase::CloseAndNotify (void)
       NotifyNormalClose ();
       m_closeNotified = true;
     }
-  if (m_lastAckEvent.IsRunning ())
-    {
-      m_lastAckEvent.Cancel ();
-    }
+
   NS_LOG_DEBUG (TcpStateName[m_state] << " -> CLOSED");
   m_state = CLOSED;
   DeallocateEndPoint ();
 }
-
 
 /* Tell if a sequence number range is out side the range that my rx buffer can
     accpet */
@@ -1124,11 +1119,11 @@ TcpSocketBase::OutOfRange (SequenceNumber32 head, SequenceNumber32 tail) const
   if (m_state == LAST_ACK || m_state == CLOSING || m_state == CLOSE_WAIT)
     { // In LAST_ACK and CLOSING states, it only wait for an ACK and the
       // sequence number must equals to m_rxBuffer->NextRxSequence ()
-      return (m_tcb->m_rxBuffer->NextRxSequence () != head);
+      return (m_rxBuffer->NextRxSequence () != head);
     }
 
   // In all other cases, check if the sequence number is in range
-  return (tail < m_tcb->m_rxBuffer->NextRxSequence () || m_tcb->m_rxBuffer->MaxRxSequence () <= head);
+  return (tail < m_rxBuffer->NextRxSequence () || m_rxBuffer->MaxRxSequence () <= head);
 }
 
 /* Function called by the L3 protocol when it received a packet to pass on to
@@ -1138,37 +1133,12 @@ void
 TcpSocketBase::ForwardUp (Ptr<Packet> packet, Ipv4Header header, uint16_t port,
                           Ptr<Ipv4Interface> incomingInterface)
 {
-  NS_LOG_LOGIC ("Socket " << this << " forward up " <<
-                m_endPoint->GetPeerAddress () <<
-                ":" << m_endPoint->GetPeerPort () <<
-                " to " << m_endPoint->GetLocalAddress () <<
-                ":" << m_endPoint->GetLocalPort ());
+  NS_LOG_LOGIC ("Socket " << this << " forward up " << m_endPoint->GetPeerAddress () << ":"
+                          << m_endPoint->GetPeerPort () << " to " << m_endPoint->GetLocalAddress ()
+                          << ":" << m_endPoint->GetLocalPort ());
 
   Address fromAddress = InetSocketAddress (header.GetSource (), port);
-  Address toAddress = InetSocketAddress (header.GetDestination (),
-                                         m_endPoint->GetLocalPort ());
-
-  TcpHeader tcpHeader;
-  uint32_t bytesRemoved = packet->PeekHeader (tcpHeader);
-
-  if (!IsValidTcpSegment (tcpHeader.GetSequenceNumber (), bytesRemoved,
-                          packet->GetSize () - bytesRemoved))
-    {
-      return;
-    }
-
-  if (header.GetEcn() == Ipv4Header::ECN_CE && m_ecnCESeq < tcpHeader.GetSequenceNumber ())
-    {
-      NS_LOG_INFO ("Received CE flag is valid");
-      NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_CE_RCVD");
-      m_ecnCESeq = tcpHeader.GetSequenceNumber ();
-      m_tcb->m_ecnState = TcpSocketState::ECN_CE_RCVD;
-      m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_ECN_IS_CE);
-    }
-  else if (header.GetEcn() != Ipv4Header::ECN_NotECT && m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED)
-    {
-      m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_ECN_NO_CE);
-    }
+  Address toAddress = InetSocketAddress (header.GetDestination (), m_endPoint->GetLocalPort ());
 
   DoForwardUp (packet, fromAddress, toAddress);
 }
@@ -1177,49 +1147,25 @@ void
 TcpSocketBase::ForwardUp6 (Ptr<Packet> packet, Ipv6Header header, uint16_t port,
                            Ptr<Ipv6Interface> incomingInterface)
 {
-  NS_LOG_LOGIC ("Socket " << this << " forward up " <<
-                m_endPoint6->GetPeerAddress () <<
-                ":" << m_endPoint6->GetPeerPort () <<
-                " to " << m_endPoint6->GetLocalAddress () <<
-                ":" << m_endPoint6->GetLocalPort ());
+  NS_LOG_LOGIC ("Socket " << this << " forward up " << m_endPoint6->GetPeerAddress () << ":"
+                          << m_endPoint6->GetPeerPort () << " to "
+                          << m_endPoint6->GetLocalAddress () << ":"
+                          << m_endPoint6->GetLocalPort ());
 
-  Address fromAddress = Inet6SocketAddress (header.GetSource (), port);
-  Address toAddress = Inet6SocketAddress (header.GetDestination (),
-                                          m_endPoint6->GetLocalPort ());
-
-  TcpHeader tcpHeader;
-  uint32_t bytesRemoved = packet->PeekHeader (tcpHeader);
-
-  if (!IsValidTcpSegment (tcpHeader.GetSequenceNumber (), bytesRemoved,
-                          packet->GetSize () - bytesRemoved))
-    {
-      return;
-    }
-
-  if (header.GetEcn() == Ipv6Header::ECN_CE && m_ecnCESeq < tcpHeader.GetSequenceNumber ())
-    {
-      NS_LOG_INFO ("Received CE flag is valid");
-      NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_CE_RCVD");
-      m_ecnCESeq = tcpHeader.GetSequenceNumber ();
-      m_tcb->m_ecnState = TcpSocketState::ECN_CE_RCVD;
-      m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_ECN_IS_CE);
-    }
-  else if (header.GetEcn() != Ipv6Header::ECN_NotECT)
-    {
-      m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_ECN_NO_CE);
-    }
+  Address fromAddress = Inet6SocketAddress (header.GetSourceAddress (), port);
+  Address toAddress =
+      Inet6SocketAddress (header.GetDestinationAddress (), m_endPoint6->GetLocalPort ());
 
   DoForwardUp (packet, fromAddress, toAddress);
 }
 
 void
-TcpSocketBase::ForwardIcmp (Ipv4Address icmpSource, uint8_t icmpTtl,
-                            uint8_t icmpType, uint8_t icmpCode,
-                            uint32_t icmpInfo)
+TcpSocketBase::ForwardIcmp (Ipv4Address icmpSource, uint8_t icmpTtl, uint8_t icmpType,
+                            uint8_t icmpCode, uint32_t icmpInfo)
 {
-  NS_LOG_FUNCTION (this << icmpSource << static_cast<uint32_t> (icmpTtl) <<
-                   static_cast<uint32_t> (icmpType) <<
-                   static_cast<uint32_t> (icmpCode) << icmpInfo);
+  NS_LOG_FUNCTION (this << icmpSource << static_cast<uint32_t> (icmpTtl)
+                        << static_cast<uint32_t> (icmpType) << static_cast<uint32_t> (icmpCode)
+                        << icmpInfo);
   if (!m_icmpCallback.IsNull ())
     {
       m_icmpCallback (icmpSource, icmpTtl, icmpType, icmpCode, icmpInfo);
@@ -1227,41 +1173,16 @@ TcpSocketBase::ForwardIcmp (Ipv4Address icmpSource, uint8_t icmpTtl,
 }
 
 void
-TcpSocketBase::ForwardIcmp6 (Ipv6Address icmpSource, uint8_t icmpTtl,
-                             uint8_t icmpType, uint8_t icmpCode,
-                             uint32_t icmpInfo)
+TcpSocketBase::ForwardIcmp6 (Ipv6Address icmpSource, uint8_t icmpTtl, uint8_t icmpType,
+                             uint8_t icmpCode, uint32_t icmpInfo)
 {
-  NS_LOG_FUNCTION (this << icmpSource << static_cast<uint32_t> (icmpTtl) <<
-                   static_cast<uint32_t> (icmpType) <<
-                   static_cast<uint32_t> (icmpCode) << icmpInfo);
+  NS_LOG_FUNCTION (this << icmpSource << static_cast<uint32_t> (icmpTtl)
+                        << static_cast<uint32_t> (icmpType) << static_cast<uint32_t> (icmpCode)
+                        << icmpInfo);
   if (!m_icmpCallback6.IsNull ())
     {
       m_icmpCallback6 (icmpSource, icmpTtl, icmpType, icmpCode, icmpInfo);
     }
-}
-
-bool
-TcpSocketBase::IsValidTcpSegment (const SequenceNumber32 seq, const uint32_t tcpHeaderSize,
-                                  const uint32_t tcpPayloadSize)
-{
-  if (tcpHeaderSize == 0 || tcpHeaderSize > 60)
-    {
-      NS_LOG_ERROR ("Bytes removed: " << tcpHeaderSize << " invalid");
-      return false; // Discard invalid packet
-    }
-  else if (tcpPayloadSize > 0 && OutOfRange (seq, seq + tcpPayloadSize))
-    {
-      // Discard fully out of range data packets
-      NS_LOG_WARN ("At state " << TcpStateName[m_state] <<
-                   " received packet of seq [" << seq <<
-                   ":" << seq + tcpPayloadSize <<
-                   ") out of range [" << m_tcb->m_rxBuffer->NextRxSequence () << ":" <<
-                   m_tcb->m_rxBuffer->MaxRxSequence () << ")");
-      // Acknowledgement should be sent for all unacceptable packets (RFC793, p.69)
-      SendEmptyPacket (TcpHeader::ACK);
-      return false;
-    }
-  return true;
 }
 
 void
@@ -1272,25 +1193,28 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
   SocketPriorityTag priorityTag;
   packet->RemovePacketTag (priorityTag);
 
-  // Peel off TCP header
+  // Peel off TCP header and do validity checking
   TcpHeader tcpHeader;
-  packet->RemoveHeader (tcpHeader);
+  uint32_t bytesRemoved = packet->RemoveHeader (tcpHeader);
   SequenceNumber32 seq = tcpHeader.GetSequenceNumber ();
-
-  if (m_state == ESTABLISHED && !(tcpHeader.GetFlags () & TcpHeader::RST))
+  if (bytesRemoved == 0 || bytesRemoved > 60)
     {
-      // Check if the sender has responded to ECN echo by reducing the Congestion Window
-      if (tcpHeader.GetFlags () & TcpHeader::CWR )
+      NS_LOG_ERROR ("Bytes removed: " << bytesRemoved << " invalid");
+      return; // Discard invalid packet
+    }
+  else if (packet->GetSize () > 0 && OutOfRange (seq, seq + packet->GetSize ()))
+    {
+      // Discard fully out of range data packets
+      NS_LOG_WARN ("At state " << TcpStateName[m_state] << " received packet of seq [" << seq << ":"
+                               << seq + packet->GetSize () << ") out of range ["
+                               << m_rxBuffer->NextRxSequence () << ":"
+                               << m_rxBuffer->MaxRxSequence () << ")");
+      // Acknowledgement should be sent for all unacceptable packets (RFC793, p.69)
+      if (m_state == ESTABLISHED && !(tcpHeader.GetFlags () & TcpHeader::RST))
         {
-          // Check if a packet with CE bit set is received. If there is no CE bit set, then change the state to ECN_IDLE to
-          // stop sending ECN Echo messages. If there is CE bit set, the packet should continue sending ECN Echo messages
-          //
-          if (m_tcb->m_ecnState != TcpSocketState::ECN_CE_RCVD)
-            {
-              NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_IDLE");
-              m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-            }
+          SendEmptyPacket (TcpHeader::ACK);
         }
+      return;
     }
 
   m_rxTrace (packet, tcpHeader, this);
@@ -1319,7 +1243,6 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
       else
         {
           m_sackEnabled = false;
-          m_txBuffer->SetSackEnabled (false);
         }
 
       // When receiving a <SYN> or <SYN-ACK> we should adapt TS to the other end
@@ -1335,7 +1258,7 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
 
       // Initialize cWnd and ssThresh
       m_tcb->m_cWnd = GetInitialCwnd () * GetSegSize ();
-      m_tcb->m_cWndInfl = m_tcb->m_cWnd;
+      m_cWndInfl = m_tcb->m_cWnd;
       m_tcb->m_ssThresh = GetInitialSSThresh ();
 
       if (tcpHeader.GetFlags () & TcpHeader::ACK)
@@ -1352,10 +1275,9 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
           if (!tcpHeader.HasOption (TcpOption::TS))
             {
               // Ignoring segment without TS, RFC 7323
-              NS_LOG_LOGIC ("At state " << TcpStateName[m_state] <<
-                            " received packet of seq [" << seq <<
-                            ":" << seq + packet->GetSize () <<
-                            ") without TS option. Silently discard it");
+              NS_LOG_LOGIC ("At state " << TcpStateName[m_state] << " received packet of seq ["
+                                        << seq << ":" << seq + packet->GetSize ()
+                                        << ") without TS option. Silently discard it");
               return;
             }
           else
@@ -1369,16 +1291,16 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
       UpdateWindowSize (tcpHeader);
     }
 
-
   if (m_rWnd.Get () == 0 && m_persistEvent.IsExpired ())
     { // Zero window: Enter persist state to send 1 byte to probe
       NS_LOG_LOGIC (this << " Enter zerowindow persist state");
-      NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at " <<
-                    (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
+      NS_LOG_LOGIC (
+          this << " Cancelled ReTxTimeout event which was set to expire at "
+               << (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
       m_retxEvent.Cancel ();
-      NS_LOG_LOGIC ("Schedule persist timeout at time " <<
-                    Simulator::Now ().GetSeconds () << " to expire at time " <<
-                    (Simulator::Now () + m_persistTimeout).GetSeconds ());
+      NS_LOG_LOGIC ("Schedule persist timeout at time "
+                    << Simulator::Now ().GetSeconds () << " to expire at time "
+                    << (Simulator::Now () + m_persistTimeout).GetSeconds ());
       m_persistEvent = Simulator::Schedule (m_persistTimeout, &TcpSocketBase::PersistTimeout, this);
       NS_ASSERT (m_persistTimeout == Simulator::GetDelayLeft (m_persistEvent));
     }
@@ -1404,7 +1326,7 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
           Ptr<Packet> p = Create<Packet> ();
           h.SetFlags (TcpHeader::RST);
           h.SetSequenceNumber (m_tcb->m_nextTxSequence);
-          h.SetAckNumber (m_tcb->m_rxBuffer->NextRxSequence ());
+          h.SetAckNumber (m_rxBuffer->NextRxSequence ());
           h.SetSourcePort (tcpHeader.GetDestinationPort ());
           h.SetDestinationPort (tcpHeader.GetSourcePort ());
           h.SetWindowSize (AdvertisedWindowSize ());
@@ -1447,12 +1369,12 @@ TcpSocketBase::DoForwardUp (Ptr<Packet> packet, const Address &fromAddress,
 /* Received a packet upon ESTABLISHED state. This function is mimicking the
     role of tcp_rcv_established() in tcp_input.c in Linux kernel. */
 void
-TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH, URG, CWR and ECE are disregarded.
-  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG | TcpHeader::CWR | TcpHeader::ECE);
+  // Extract the flags. PSH and URG are not honoured.
+  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   // Different flags are different events
   if (tcpflags == TcpHeader::ACK)
@@ -1461,8 +1383,8 @@ TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader& tcpHeade
         {
           // Case 1:  If the ACK is a duplicate (SEG.ACK < SND.UNA), it can be ignored.
           // Pag. 72 RFC 793
-          NS_LOG_WARN ("Ignored ack of " << tcpHeader.GetAckNumber () <<
-                       " SND.UNA = " << m_txBuffer->HeadSequence ());
+          NS_LOG_WARN ("Ignored ack of " << tcpHeader.GetAckNumber ()
+                                         << " SND.UNA = " << m_txBuffer->HeadSequence ());
 
           // TODO: RFC 5961 5.2 [Blind Data Injection Attack].[Mitigation]
         }
@@ -1471,20 +1393,10 @@ TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader& tcpHeade
           // If the ACK acks something not yet sent (SEG.ACK > HighTxMark) then
           // send an ACK, drop the segment, and return.
           // Pag. 72 RFC 793
-          NS_LOG_WARN ("Ignored ack of " << tcpHeader.GetAckNumber () <<
-                       " HighTxMark = " << m_tcb->m_highTxMark);
+          NS_LOG_WARN ("Ignored ack of " << tcpHeader.GetAckNumber ()
+                                         << " HighTxMark = " << m_tcb->m_highTxMark);
 
-          // Receiver sets ECE flags when it receives a packet with CE bit on or sender hasn’t responded to ECN echo sent by receiver
-          if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-            {
-              SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-              NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_SENDING_ECE");
-              m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-            }
-          else
-            {
-              SendEmptyPacket (TcpHeader::ACK);
-            }
+          SendEmptyPacket (TcpHeader::ACK);
         }
       else
         {
@@ -1508,7 +1420,7 @@ TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader& tcpHeade
   else if (tcpflags == 0)
     { // No flags means there is only data
       ReceivedData (packet, tcpHeader);
-      if (m_tcb->m_rxBuffer->Finished ())
+      if (m_rxBuffer->Finished ())
         {
           PeerClose (packet, tcpHeader);
         }
@@ -1517,7 +1429,8 @@ TcpSocketBase::ProcessEstablished (Ptr<Packet> packet, const TcpHeader& tcpHeade
     { // Received RST or the TCP flags is invalid, in either case, terminate this socket
       if (tcpflags != TcpHeader::RST)
         { // this must be an invalid flag, send reset
-          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags) << " received. Reset packet is sent.");
+          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                        << " received. Reset packet is sent.");
           SendRST ();
         }
       CloseAndNotify ();
@@ -1545,7 +1458,7 @@ TcpSocketBase::IsTcpOptionEnabled (uint8_t kind) const
 }
 
 void
-TcpSocketBase::ReadOptions (const TcpHeader &tcpHeader, uint32_t *bytesSacked)
+TcpSocketBase::ReadOptions (const TcpHeader &tcpHeader, bool &scoreboardUpdated)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
   TcpHeader::TcpOptionList::const_iterator it;
@@ -1559,7 +1472,7 @@ TcpSocketBase::ReadOptions (const TcpHeader &tcpHeader, uint32_t *bytesSacked)
       switch (option->GetKind ())
         {
         case TcpOption::SACK:
-          *bytesSacked = ProcessOptionSack (option);
+          scoreboardUpdated = ProcessOptionSack (option);
           break;
         default:
           continue;
@@ -1567,43 +1480,13 @@ TcpSocketBase::ReadOptions (const TcpHeader &tcpHeader, uint32_t *bytesSacked)
     }
 }
 
-// Sender should reduce the Congestion Window as a response to receiver's
-// ECN Echo notification only once per window
 void
-TcpSocketBase::EnterCwr (uint32_t currentDelivered)
-{
-  NS_LOG_FUNCTION (this << currentDelivered);
-  m_tcb->m_ssThresh = m_congestionControl->GetSsThresh (m_tcb, BytesInFlight ());
-  NS_LOG_DEBUG ("Reduce ssThresh to " << m_tcb->m_ssThresh);
-  // Do not update m_cWnd, under assumption that recovery process will
-  // gradually bring it down to m_ssThresh.  Update the 'inflated' value of
-  // cWnd used for tracing, however.
-  m_tcb->m_cWndInfl = m_tcb->m_ssThresh;
-  NS_ASSERT (m_tcb->m_congState != TcpSocketState::CA_CWR);
-  NS_LOG_DEBUG (TcpSocketState::TcpCongStateName[m_tcb->m_congState] << " -> CA_CWR");
-  m_tcb->m_congState = TcpSocketState::CA_CWR;
-  // CWR state will be exited when the ack exceeds the m_recover variable.
-  // Do not set m_recoverActive (which applies to a loss-based recovery)
-  // m_recover corresponds to Linux tp->high_seq
-  m_recover = m_tcb->m_highTxMark;
-  if (!m_congestionControl->HasCongControl ())
-    {
-      // If there is a recovery algorithm, invoke it.
-      m_recoveryOps->EnterRecovery (m_tcb, m_dupAckCount, UnAckDataCount (), currentDelivered);
-      NS_LOG_INFO ("Enter CWR recovery mode; set cwnd to " << m_tcb->m_cWnd
-                    << ", ssthresh to " << m_tcb->m_ssThresh
-                    << ", recover to " << m_recover);
-    }
-}
-
-void
-TcpSocketBase::EnterRecovery (uint32_t currentDelivered)
+TcpSocketBase::EnterRecovery ()
 {
   NS_LOG_FUNCTION (this);
   NS_ASSERT (m_tcb->m_congState != TcpSocketState::CA_RECOVERY);
 
-  NS_LOG_DEBUG (TcpSocketState::TcpCongStateName[m_tcb->m_congState] <<
-                " -> CA_RECOVERY");
+  NS_LOG_UNCOND (TcpSocketState::TcpCongStateName[m_tcb->m_congState] << " -> CA_RECOVERY");
 
   if (!m_sackEnabled)
     {
@@ -1626,7 +1509,6 @@ TcpSocketBase::EnterRecovery (uint32_t currentDelivered)
   // (4) Invoke fast retransmit and enter loss recovery as follows:
   // (4.1) RecoveryPoint = HighData
   m_recover = m_tcb->m_highTxMark;
-  m_recoverActive = true;
 
   m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_RECOVERY);
   m_tcb->m_congState = TcpSocketState::CA_RECOVERY;
@@ -1634,18 +1516,21 @@ TcpSocketBase::EnterRecovery (uint32_t currentDelivered)
   // (4.2) ssthresh = cwnd = (FlightSize / 2)
   // If SACK is not enabled, still consider the head as 'in flight' for
   // compatibility with old ns-3 versions
-  uint32_t bytesInFlight = m_sackEnabled ? BytesInFlight () : BytesInFlight () + m_tcb->m_segmentSize;
+  uint32_t bytesInFlight =
+      m_sackEnabled ? BytesInFlight () : BytesInFlight () + m_tcb->m_segmentSize;
   m_tcb->m_ssThresh = m_congestionControl->GetSsThresh (m_tcb, bytesInFlight);
 
   if (!m_congestionControl->HasCongControl ())
     {
-      m_recoveryOps->EnterRecovery (m_tcb, m_dupAckCount, UnAckDataCount (), currentDelivered);
-      NS_LOG_INFO (m_dupAckCount << " dupack. Enter fast recovery mode." <<
-                  "Reset cwnd to " << m_tcb->m_cWnd << ", ssthresh to " <<
-                   m_tcb->m_ssThresh << " at fast recovery seqnum " << m_recover <<
-                   " calculated in flight: " << bytesInFlight);
+      m_tcb->m_cWnd = m_tcb->m_ssThresh;
+      m_cWndInfl = m_tcb->m_ssThresh + m_dupAckCount * m_tcb->m_segmentSize;
     }
 
+  NS_LOG_UNCOND ("time: " << Simulator::Now ().GetSeconds () << "; node: " << m_node->GetId ()
+                          << " " << m_dupAckCount << " dupack. Enter fast recovery mode."
+                          << "Reset cwnd to " << m_tcb->m_cWnd.Get () << ", ssthresh to "
+                          << m_tcb->m_ssThresh << " at fast recovery seqnum " << m_recover
+                          << " calculated in flight: " << bytesInFlight);
 
   // (4.3) Retransmit the first data segment presumed dropped
   DoRetransmit ();
@@ -1655,7 +1540,7 @@ TcpSocketBase::EnterRecovery (uint32_t currentDelivered)
 }
 
 void
-TcpSocketBase::DupAck (uint32_t currentDelivered)
+TcpSocketBase::DupAck ()
 {
   NS_LOG_FUNCTION (this);
   // NOTE: We do not count the DupAcks received in CA_LOSS, because we
@@ -1676,13 +1561,25 @@ TcpSocketBase::DupAck (uint32_t currentDelivered)
   if (m_tcb->m_congState != TcpSocketState::CA_RECOVERY)
     {
       ++m_dupAckCount;
+      totalDupAcks += m_dupAckCount;
+      std::cout << m_node->GetId () << ": " << totalDupAcks << "\n";
+    }
+
+  if (!m_congestionControl->HasCongControl () && !m_sackEnabled &&
+      m_tcb->m_congState == TcpSocketState::CA_RECOVERY)
+    {
+      // If we are in recovery and we receive a dupack, one segment
+      // has left the network. This is equivalent to a SACK of one block.
+      m_txBuffer->AddRenoSack ();
+
+      m_cWndInfl += m_tcb->m_segmentSize;
     }
 
   if (m_tcb->m_congState == TcpSocketState::CA_OPEN)
     {
       // From Open we go Disorder
-      NS_ASSERT_MSG (m_dupAckCount == 1, "From OPEN->DISORDER but with " <<
-                     m_dupAckCount << " dup ACKs");
+      NS_ASSERT_MSG (m_dupAckCount == 1,
+                     "From OPEN->DISORDER but with " << m_dupAckCount << " dup ACKs");
 
       m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_DISORDER);
       m_tcb->m_congState = TcpSocketState::CA_DISORDER;
@@ -1690,45 +1587,14 @@ TcpSocketBase::DupAck (uint32_t currentDelivered)
       NS_LOG_DEBUG ("CA_OPEN -> CA_DISORDER");
     }
 
-  if (m_tcb->m_congState == TcpSocketState::CA_RECOVERY)
+  if (m_tcb->m_congState == TcpSocketState::CA_DISORDER)
     {
-      if (!m_sackEnabled)
-        {
-          // If we are in recovery and we receive a dupack, one segment
-          // has left the network. This is equivalent to a SACK of one block.
-          m_txBuffer->AddRenoSack ();
-        }
-      if (!m_congestionControl->HasCongControl ())
-        {
-          m_recoveryOps->DoRecovery (m_tcb, currentDelivered);
-          NS_LOG_INFO (m_dupAckCount << " Dupack received in fast recovery mode."
-                       "Increase cwnd to " << m_tcb->m_cWnd);
-        }
-    }
-  else if (m_tcb->m_congState == TcpSocketState::CA_DISORDER)
-    {
-      // m_dupackCount should not exceed its threshold in CA_DISORDER state
-      // when m_recoverActive has not been set. When recovery point
-      // have been set after timeout, the sender could enter into CA_DISORDER
-      // after receiving new ACK smaller than m_recover. After that, m_dupackCount
-      // can be equal and larger than m_retxThresh and we should avoid entering
-      // CA_RECOVERY and reducing sending rate again.
-      NS_ASSERT((m_dupAckCount <= m_retxThresh) || m_recoverActive);
-
       // RFC 6675, Section 5, continuing:
       // ... and take the following steps:
       // (1) If DupAcks >= DupThresh, go to step (4).
-      //     Sequence number comparison (m_highRxAckMark >= m_recover) will take
-      //     effect only when m_recover has been set. Hence, we can avoid to use
-      //     m_recover in the last congestion event and fail to enter
-      //     CA_RECOVERY when sequence number is advanced significantly since
-      //     the last congestion event, which could be common for
-      //     bandwidth-greedy application in high speed and reliable network
-      //     (such as datacenter network) whose sending rate is constrainted by
-      //     TCP socket buffer size at receiver side.
-      if ((m_dupAckCount == m_retxThresh) && ((m_highRxAckMark >= m_recover) || (!m_recoverActive)))
+      if ((m_dupAckCount == m_retxThresh) && (m_highRxAckMark >= m_recover))
         {
-          EnterRecovery (currentDelivered);
+          EnterRecovery ();
           NS_ASSERT (m_tcb->m_congState == TcpSocketState::CA_RECOVERY);
         }
       // (2) If DupAcks < DupThresh but IsLost (HighACK + 1) returns true
@@ -1737,7 +1603,7 @@ TcpSocketBase::DupAck (uint32_t currentDelivered)
       // go to step (4).
       else if (m_txBuffer->IsLost (m_highRxAckMark + m_tcb->m_segmentSize))
         {
-          EnterRecovery (currentDelivered);
+          EnterRecovery ();
           NS_ASSERT (m_tcb->m_congState == TcpSocketState::CA_RECOVERY);
         }
       else
@@ -1750,7 +1616,7 @@ TcpSocketBase::DupAck (uint32_t currentDelivered)
           // Not clear in RFC. We don't do this here, since we still have
           // to retransmit the segment.
 
-          if (!m_sackEnabled && m_limitedTx)
+          if (!m_congestionControl->HasCongControl () && !m_sackEnabled && m_limitedTx)
             {
               m_txBuffer->AddRenoSack ();
 
@@ -1762,108 +1628,43 @@ TcpSocketBase::DupAck (uint32_t currentDelivered)
 
 /* Process the newly received ACK */
 void
-TcpSocketBase::ReceivedAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ReceivedAck (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
   NS_ASSERT (0 != (tcpHeader.GetFlags () & TcpHeader::ACK));
   NS_ASSERT (m_tcb->m_segmentSize > 0);
 
-  uint32_t previousLost = m_txBuffer->GetLost ();
-  uint32_t priorInFlight = m_tcb->m_bytesInFlight.Get ();
+  struct RateSample *rs = m_txBuffer->GetRateSample ();
+  rs->m_priorInFlight = m_tcb->m_bytesInFlight.Get ();
+
+  uint32_t lostOut = m_txBuffer->GetLost ();
+  uint32_t delivered = m_tcb->m_delivered;
 
   // RFC 6675, Section 5, 1st paragraph:
   // Upon the receipt of any ACK containing SACK information, the
   // scoreboard MUST be updated via the Update () routine (done in ReadOptions)
-  uint32_t bytesSacked = 0;
-  uint64_t previousDelivered = m_rateOps->GetConnectionRate ().m_delivered;
-  ReadOptions (tcpHeader, &bytesSacked);
+  bool scoreboardUpdated = false;
+  ReadOptions (tcpHeader, scoreboardUpdated);
 
   SequenceNumber32 ackNumber = tcpHeader.GetAckNumber ();
   SequenceNumber32 oldHeadSequence = m_txBuffer->HeadSequence ();
+  m_txBuffer->DiscardUpTo (ackNumber);
 
-  if (ackNumber < oldHeadSequence)
-    {
-      NS_LOG_DEBUG ("Possibly received a stale ACK (ack number < head sequence)");
-      // If there is any data piggybacked, store it into m_rxBuffer
-      if (packet->GetSize () > 0)
-        {
-          ReceivedData (packet, tcpHeader);
-        }
-      return;
-    }
-  if ((ackNumber > oldHeadSequence) && (ackNumber < m_recover)
-                                    && (m_tcb->m_congState == TcpSocketState::CA_RECOVERY))
-    {
-      uint32_t segAcked = (ackNumber - oldHeadSequence)/m_tcb->m_segmentSize;
-      for (uint32_t i = 0; i < segAcked; i++)
-        {
-          if (m_txBuffer->IsRetransmittedDataAcked (ackNumber - (i * m_tcb->m_segmentSize)))
-            {
-              m_tcb->m_isRetransDataAcked = true;
-              NS_LOG_DEBUG ("Ack Number " << ackNumber <<
-                            "is ACK of retransmitted packet.");
-            }
-        }
-    }
+  NS_LOG_INFO ("BytesInFlight :: " << BytesInFlight ());
 
-  m_txBuffer->DiscardUpTo (ackNumber, MakeCallback (&TcpRateOps::SkbDelivered, m_rateOps));
-
-  uint32_t currentDelivered = static_cast<uint32_t> (m_rateOps->GetConnectionRate ().m_delivered - previousDelivered);
-  m_tcb->m_lastAckedSackedBytes = currentDelivered;
-
-  if (m_tcb->m_congState == TcpSocketState::CA_CWR && (ackNumber > m_recover))
-    {
-      // Recovery is over after the window exceeds m_recover
-      // (although it may be re-entered below if ECE is still set)
-      NS_LOG_DEBUG (TcpSocketState::TcpCongStateName[m_tcb->m_congState] << " -> CA_OPEN");
-      m_tcb->m_congState = TcpSocketState::CA_OPEN;
-      if (!m_congestionControl->HasCongControl ())
-        {
-           m_tcb->m_cWnd = m_tcb->m_ssThresh.Get ();
-           m_recoveryOps->ExitRecovery (m_tcb);
-           m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_COMPLETE_CWR);
-        }
-    }
-
-  if (ackNumber > oldHeadSequence && (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED) && (tcpHeader.GetFlags () & TcpHeader::ECE))
-    {
-      if (m_ecnEchoSeq < ackNumber)
-        {
-          NS_LOG_INFO ("Received ECN Echo is valid");
-          m_ecnEchoSeq = ackNumber;
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_ECE_RCVD");
-          m_tcb->m_ecnState = TcpSocketState::ECN_ECE_RCVD;
-          if (m_tcb->m_congState != TcpSocketState::CA_CWR)
-            {
-              EnterCwr (currentDelivered);
-            }
-        }
-    }
-  else if (m_tcb->m_ecnState == TcpSocketState::ECN_ECE_RCVD && !(tcpHeader.GetFlags () & TcpHeader::ECE))
-    {
-      m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-    }
-
-  // Update bytes in flight before processing the ACK for proper calculation of congestion window
-  NS_LOG_INFO ("Update bytes in flight before processing the ACK.");
-  BytesInFlight ();
+  m_txBuffer->GenerateRateSample ();
+  rs->m_packetLoss = std::abs ((int) lostOut - (int) m_txBuffer->GetLost ());
+  m_tcb->m_lastAckedSackedBytes = m_tcb->m_delivered - delivered;
 
   // RFC 6675 Section 5: 2nd, 3rd paragraph and point (A), (B) implementation
   // are inside the function ProcessAck
-  ProcessAck (ackNumber, (bytesSacked > 0), currentDelivered, oldHeadSequence);
-  m_tcb->m_isRetransDataAcked = false;
+  ProcessAck (ackNumber, scoreboardUpdated, oldHeadSequence);
 
   if (m_congestionControl->HasCongControl ())
     {
-      uint32_t currentLost = m_txBuffer->GetLost ();
-      uint32_t lost = (currentLost > previousLost) ?
-            currentLost - previousLost :
-            previousLost - currentLost;
-      auto rateSample = m_rateOps->GenerateSample (currentDelivered, lost,
-                                              false, priorInFlight, m_tcb->m_minRtt);
-      auto rateConn = m_rateOps->GetConnectionRate ();
-      m_congestionControl->CongControl(m_tcb, rateConn, rateSample);
+      m_congestionControl->CongControl (m_tcb, rs);
+      m_cWndInfl = m_tcb->m_cWnd;
     }
 
   // If there is any data piggybacked, store it into m_rxBuffer
@@ -1878,8 +1679,8 @@ TcpSocketBase::ReceivedAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
 }
 
 void
-TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpdated,
-                          uint32_t currentDelivered, const SequenceNumber32 &oldHeadSequence)
+TcpSocketBase::ProcessAck (const SequenceNumber32 &ackNumber, bool scoreboardUpdated,
+                           const SequenceNumber32 &oldHeadSequence)
 {
   NS_LOG_FUNCTION (this << ackNumber << scoreboardUpdated);
   // RFC 6675, Section 5, 2nd paragraph:
@@ -1888,7 +1689,6 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
   bool exitedFastRecovery = false;
   uint32_t oldDupAckCount = m_dupAckCount; // remember the old value
   m_tcb->m_lastAckedSeq = ackNumber; // Update lastAckedSeq
-  uint32_t bytesAcked = 0;
 
   /* In RFC 5681 the definition of duplicate acknowledgment was strict:
    *
@@ -1907,16 +1707,13 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
    *     HighData (m_highTxMark)
    */
 
-  bool isDupack = m_sackEnabled ?
-    scoreboardUpdated
-    : ackNumber == oldHeadSequence &&
-    ackNumber < m_tcb->m_highTxMark;
+  bool isDupack = m_sackEnabled ? scoreboardUpdated
+                                : ackNumber == oldHeadSequence && ackNumber < m_tcb->m_highTxMark;
 
-  NS_LOG_DEBUG ("ACK of " << ackNumber <<
-                " SND.UNA=" << oldHeadSequence <<
-                " SND.NXT=" << m_tcb->m_nextTxSequence <<
-                " in state: " << TcpSocketState::TcpCongStateName[m_tcb->m_congState] <<
-                " with m_recover: " << m_recover);
+  NS_LOG_DEBUG ("ACK of " << ackNumber << " SND.UNA=" << oldHeadSequence
+                          << " SND.NXT=" << m_tcb->m_nextTxSequence
+                          << " in state: " << TcpSocketState::TcpCongStateName[m_tcb->m_congState]
+                          << " with m_recover: " << m_recover);
 
   // RFC 6675, Section 5, 3rd paragraph:
   // If the incoming ACK is a duplicate acknowledgment per the definition
@@ -1926,17 +1723,15 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
     {
       // loss recovery check is done inside this function thanks to
       // the congestion state machine
-      DupAck (currentDelivered);
+      DupAck ();
     }
 
-  if (ackNumber == oldHeadSequence
-      && ackNumber == m_tcb->m_highTxMark)
+  if (ackNumber == oldHeadSequence && ackNumber == m_tcb->m_highTxMark)
     {
       // Dupack, but the ACK is precisely equal to the nextTxSequence
       return;
     }
-  else if (ackNumber == oldHeadSequence
-           && ackNumber > m_tcb->m_highTxMark)
+  else if (ackNumber == oldHeadSequence && ackNumber > m_tcb->m_highTxMark)
     {
       // ACK of the FIN bit ... nextTxSequence is not updated since we
       // don't have anything to transmit
@@ -1952,15 +1747,13 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
     {
       // Please remember that, with SACK, we can enter here even if we
       // received a dupack.
-      bytesAcked = ackNumber - oldHeadSequence;
-      uint32_t segsAcked  = bytesAcked / m_tcb->m_segmentSize;
+      uint32_t bytesAcked = ackNumber - oldHeadSequence;
+      uint32_t segsAcked = bytesAcked / m_tcb->m_segmentSize;
       m_bytesAckedNotProcessed += bytesAcked % m_tcb->m_segmentSize;
-      bytesAcked -= bytesAcked % m_tcb->m_segmentSize;
 
       if (m_bytesAckedNotProcessed >= m_tcb->m_segmentSize)
         {
           segsAcked += 1;
-          bytesAcked += m_tcb->m_segmentSize;
           m_bytesAckedNotProcessed -= m_tcb->m_segmentSize;
         }
 
@@ -1996,19 +1789,17 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
               NS_LOG_INFO ("Partial ACK. Manually setting head as lost");
               m_txBuffer->MarkHeadAsLost ();
             }
-
-          // Before retransmitting the packet perform DoRecovery and check if
-          // there is available window
-          if (!m_congestionControl->HasCongControl () && segsAcked >= 1)
+          else
             {
-              m_recoveryOps->DoRecovery (m_tcb, currentDelivered);
+              // We received a partial ACK, if we retransmitted this segment
+              // probably is better to retransmit it
+              m_txBuffer->DeleteRetransmittedFlagFromHead ();
             }
-
-          // If the packet is already retransmitted do not retransmit it
-          if (!m_txBuffer->IsRetransmittedDataAcked (ackNumber + m_tcb->m_segmentSize))
+          DoRetransmit (); // Assume the next seq is lost. Retransmit lost packet
+          m_cWndInfl = SafeSubtraction (m_cWndInfl, bytesAcked);
+          if (segsAcked >= 1)
             {
-              DoRetransmit (); // Assume the next seq is lost. Retransmit lost packet
-              m_tcb->m_cWndInfl = SafeSubtraction (m_tcb->m_cWndInfl, bytesAcked);
+              m_cWndInfl += m_tcb->m_segmentSize;
             }
 
           // This partial ACK acknowledge the fact that one segment has been
@@ -2019,20 +1810,21 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
 
           if (m_isFirstPartialAck)
             {
-              NS_LOG_DEBUG ("Partial ACK of " << ackNumber <<
-                            " and this is the first (RTO will be reset);"
-                            " cwnd set to " << m_tcb->m_cWnd <<
-                            " recover seq: " << m_recover <<
-                            " dupAck count: " << m_dupAckCount);
+              NS_LOG_DEBUG ("Partial ACK of " << ackNumber
+                                              << " and this is the first (RTO will be reset);"
+                                                 " cwnd set to "
+                                              << m_tcb->m_cWnd << " recover seq: " << m_recover
+                                              << " dupAck count: " << m_dupAckCount);
               m_isFirstPartialAck = false;
             }
           else
             {
-              NS_LOG_DEBUG ("Partial ACK of " << ackNumber <<
-                            " and this is NOT the first (RTO will not be reset)"
-                            " cwnd set to " << m_tcb->m_cWnd <<
-                            " recover seq: " << m_recover <<
-                            " dupAck count: " << m_dupAckCount);
+              NS_LOG_DEBUG ("Partial ACK of "
+                            << ackNumber
+                            << " and this is NOT the first (RTO will not be reset)"
+                               " cwnd set to "
+                            << m_tcb->m_cWnd << " recover seq: " << m_recover
+                            << " dupAck count: " << m_dupAckCount);
             }
         }
       // From RFC 6675 section 5.1
@@ -2042,26 +1834,17 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
       else if (ackNumber < m_recover && m_tcb->m_congState == TcpSocketState::CA_LOSS)
         {
           m_congestionControl->PktsAcked (m_tcb, segsAcked, m_tcb->m_lastRtt);
-          m_congestionControl->IncreaseWindow (m_tcb, segsAcked);
-
-          NS_LOG_DEBUG (" Cong Control Called, cWnd=" << m_tcb->m_cWnd <<
-                        " ssTh=" << m_tcb->m_ssThresh);
-          if (!m_sackEnabled)
+          if (!m_congestionControl->HasCongControl ())
             {
-              NS_ASSERT_MSG (m_txBuffer->GetSacked () == 0,
-                             "Some segment got dup-acked in CA_LOSS state: " <<
-                             m_txBuffer->GetSacked ());
-            }
-          NewAck (ackNumber, true);
-        }
-      else if (m_tcb->m_congState == TcpSocketState::CA_CWR)
-        {
-          m_congestionControl->PktsAcked (m_tcb, segsAcked, m_tcb->m_lastRtt);
-          // TODO: need to check behavior if marking is compounded by loss
-          // and/or packet reordering
-          if (!m_congestionControl->HasCongControl () && segsAcked >= 1)
-            {
-              m_recoveryOps->DoRecovery (m_tcb, currentDelivered);
+              m_congestionControl->IncreaseWindow (m_tcb, segsAcked);
+              NS_LOG_DEBUG (" Cong Control Called, cWnd=" << m_tcb->m_cWnd
+                                                          << " ssTh=" << m_tcb->m_ssThresh);
+              if (!m_sackEnabled)
+                {
+                  NS_ASSERT_MSG (
+                      m_txBuffer->GetSacked () == 0,
+                      "Some segment got dup-acked in CA_LOSS state: " << m_txBuffer->GetSacked ());
+                }
             }
           NewAck (ackNumber, true);
         }
@@ -2075,7 +1858,8 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
             {
               if (segsAcked >= oldDupAckCount)
                 {
-                  m_congestionControl->PktsAcked (m_tcb, segsAcked - oldDupAckCount, m_tcb->m_lastRtt);
+                  m_congestionControl->PktsAcked (m_tcb, segsAcked - oldDupAckCount,
+                                                  m_tcb->m_lastRtt);
                 }
 
               if (!isDupack)
@@ -2084,13 +1868,13 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
                   // packet algorithm from FACK to NewReno. We simply go back in Open.
                   m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
                   m_tcb->m_congState = TcpSocketState::CA_OPEN;
-                  NS_LOG_DEBUG (segsAcked << " segments acked in CA_DISORDER, ack of " <<
-                                ackNumber << " exiting CA_DISORDER -> CA_OPEN");
+                  NS_LOG_DEBUG (segsAcked << " segments acked in CA_DISORDER, ack of " << ackNumber
+                                          << " exiting CA_DISORDER -> CA_OPEN");
                 }
               else
                 {
-                  NS_LOG_DEBUG (segsAcked << " segments acked in CA_DISORDER, ack of " <<
-                                ackNumber << " but still in CA_DISORDER");
+                  NS_LOG_DEBUG (segsAcked << " segments acked in CA_DISORDER, ack of " << ackNumber
+                                          << " but still in CA_DISORDER");
                 }
             }
           // RFC 6675, Section 5:
@@ -2109,8 +1893,7 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
               // Recalculate the segs acked, that are from m_recover to ackNumber
               // (which are the ones we have not passed to PktsAcked and that
               // can increase cWnd)
-              // TODO:  check consistency for dynamic segment size
-              segsAcked = static_cast<uint32_t>(ackNumber - oldHeadSequence) / m_tcb->m_segmentSize;
+              segsAcked = static_cast<uint32_t> (ackNumber - m_recover) / m_tcb->m_segmentSize;
               m_congestionControl->PktsAcked (m_tcb, segsAcked, m_tcb->m_lastRtt);
               m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_COMPLETE_CWR);
               m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
@@ -2118,8 +1901,8 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
               exitedFastRecovery = true;
               m_dupAckCount = 0; // From recovery to open, reset dupack
 
-              NS_LOG_DEBUG (segsAcked << " segments acked in CA_RECOVER, ack of " <<
-                            ackNumber << ", exiting CA_RECOVERY -> CA_OPEN");
+              NS_LOG_DEBUG (segsAcked << " segments acked in CA_RECOVER, ack of " << ackNumber
+                                      << ", exiting CA_RECOVERY -> CA_OPEN");
             }
           else if (m_tcb->m_congState == TcpSocketState::CA_LOSS)
             {
@@ -2134,57 +1917,51 @@ TcpSocketBase::ProcessAck(const SequenceNumber32 &ackNumber, bool scoreboardUpda
 
               m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
               m_tcb->m_congState = TcpSocketState::CA_OPEN;
-              NS_LOG_DEBUG (segsAcked << " segments acked in CA_LOSS, ack of" <<
-                            ackNumber << ", exiting CA_LOSS -> CA_OPEN");
-            }
-
-          if (ackNumber >= m_recover)
-            {
-              // All lost segments in the congestion event have been
-              // retransmitted successfully. The recovery point (m_recover)
-              // should be deactivated.
-              m_recoverActive = false;
+              NS_LOG_DEBUG (segsAcked << " segments acked in CA_LOSS, ack of" << ackNumber
+                                      << ", exiting CA_LOSS -> CA_OPEN");
             }
 
           if (exitedFastRecovery)
             {
               NewAck (ackNumber, true);
-              m_tcb->m_cWnd = m_tcb->m_ssThresh.Get ();
-              m_recoveryOps->ExitRecovery (m_tcb);
-              NS_LOG_DEBUG ("Leaving Fast Recovery; BytesInFlight() = " <<
-                            BytesInFlight () << "; cWnd = " << m_tcb->m_cWnd);
+              if (!m_congestionControl->HasCongControl ())
+                {
+                  // Follow NewReno procedures to exit FR if SACK is disabled
+                  // (RFC2582 sec.3 bullet #5 paragraph 2, option 2)
+                  m_cWndInfl = m_tcb->m_ssThresh.Get ();
+                  // For SACK connections, we maintain the cwnd = ssthresh. In fact,
+                  // this ACK was received in RECOVERY phase, not in OPEN. So we
+                  // are not allowed to increase the window
+                  NS_LOG_DEBUG ("Leaving Fast Recovery; BytesInFlight() = "
+                                << BytesInFlight () << "; cWnd = " << m_tcb->m_cWnd);
+                }
             }
-          if (m_tcb->m_congState == TcpSocketState::CA_OPEN)
+          else
             {
-              m_congestionControl->IncreaseWindow (m_tcb, segsAcked);
-
-              m_tcb->m_cWndInfl = m_tcb->m_cWnd;
-
-              NS_LOG_LOGIC ("Congestion control called: " <<
-                            " cWnd: " << m_tcb->m_cWnd <<
-                            " ssTh: " << m_tcb->m_ssThresh <<
-                            " segsAcked: " << segsAcked);
+              if (!m_congestionControl->HasCongControl ())
+                {
+                  m_congestionControl->IncreaseWindow (m_tcb, segsAcked);
+                  m_cWndInfl = m_tcb->m_cWnd;
+                }
+              NS_LOG_LOGIC ("Congestion control called: "
+                            << " cWnd: " << m_tcb->m_cWnd << " ssTh: " << m_tcb->m_ssThresh
+                            << " segsAcked: " << segsAcked);
 
               NewAck (ackNumber, true);
             }
         }
     }
-  // Update the pacing rate, since m_congestionControl->IncreaseWindow() or
-  // m_congestionControl->PktsAcked () may change m_tcb->m_cWnd
-  // Make sure that control reaches the end of this function and there is no
-  // return in between
-  UpdatePacingRate ();
 }
 
 /* Received a packet upon LISTEN state. */
 void
-TcpSocketBase::ProcessListen (Ptr<Packet> packet, const TcpHeader& tcpHeader,
-                              const Address& fromAddress, const Address& toAddress)
+TcpSocketBase::ProcessListen (Ptr<Packet> packet, const TcpHeader &tcpHeader,
+                              const Address &fromAddress, const Address &toAddress)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH, URG, CWR and ECE are disregarded.
-  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG | TcpHeader::CWR | TcpHeader::ECE);
+  // Extract the flags. PSH and URG are not honoured.
+  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   // Fork a socket if received a SYN. Do nothing otherwise.
   // C.f.: the LISTEN part in tcp_v4_do_rcv() in tcp_ipv4.c in Linux kernel
@@ -2202,24 +1979,23 @@ TcpSocketBase::ProcessListen (Ptr<Packet> packet, const TcpHeader& tcpHeader,
   // Clone the socket, simulate fork
   Ptr<TcpSocketBase> newSock = Fork ();
   NS_LOG_LOGIC ("Cloned a TcpSocketBase " << newSock);
-  Simulator::ScheduleNow (&TcpSocketBase::CompleteFork, newSock,
-                          packet, tcpHeader, fromAddress, toAddress);
+  Simulator::ScheduleNow (&TcpSocketBase::CompleteFork, newSock, packet, tcpHeader, fromAddress,
+                          toAddress);
 }
 
 /* Received a packet upon SYN_SENT */
 void
-TcpSocketBase::ProcessSynSent (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ProcessSynSent (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH and URG are disregarded.
+  // Extract the flags. PSH and URG are not honoured.
   uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   if (tcpflags == 0)
     { // Bare data, accept it and move to ESTABLISHED state. This is not a normal behaviour. Remove this?
       NS_LOG_DEBUG ("SYN_SENT -> ESTABLISHED");
       m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
-      m_tcb->m_congState = TcpSocketState::CA_OPEN;
       m_state = ESTABLISHED;
       m_connected = true;
       m_retxEvent.Cancel ();
@@ -2227,61 +2003,29 @@ TcpSocketBase::ProcessSynSent (Ptr<Packet> packet, const TcpHeader& tcpHeader)
       ReceivedData (packet, tcpHeader);
       Simulator::ScheduleNow (&TcpSocketBase::ConnectionSucceeded, this);
     }
-  else if (tcpflags & TcpHeader::ACK && !(tcpflags & TcpHeader::SYN))
+  else if (tcpflags == TcpHeader::ACK)
     { // Ignore ACK in SYN_SENT
     }
-  else if (tcpflags & TcpHeader::SYN && !(tcpflags & TcpHeader::ACK))
+  else if (tcpflags == TcpHeader::SYN)
     { // Received SYN, move to SYN_RCVD state and respond with SYN+ACK
       NS_LOG_DEBUG ("SYN_SENT -> SYN_RCVD");
       m_state = SYN_RCVD;
       m_synCount = m_synRetries;
-      m_tcb->m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
-      /* Check if we received an ECN SYN packet. Change the ECN state of receiver to ECN_IDLE if the traffic is ECN capable and
-       * sender has sent ECN SYN packet
-       */
-
-      if (m_tcb->m_useEcn != TcpSocketState::Off && (tcpflags & (TcpHeader::CWR | TcpHeader::ECE)) == (TcpHeader::CWR | TcpHeader::ECE))
-        {
-          NS_LOG_INFO ("Received ECN SYN packet");
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK | TcpHeader::ECE);
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_IDLE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-        }
-      else
-        {
-          m_tcb->m_ecnState = TcpSocketState::ECN_DISABLED;
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
-        }
+      m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
+      SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
     }
-  else if (tcpflags & (TcpHeader::SYN | TcpHeader::ACK)
-           && m_tcb->m_nextTxSequence + SequenceNumber32 (1) == tcpHeader.GetAckNumber ())
+  else if (tcpflags == (TcpHeader::SYN | TcpHeader::ACK) &&
+           m_tcb->m_nextTxSequence + SequenceNumber32 (1) == tcpHeader.GetAckNumber ())
     { // Handshake completed
       NS_LOG_DEBUG ("SYN_SENT -> ESTABLISHED");
       m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
-      m_tcb->m_congState = TcpSocketState::CA_OPEN;
       m_state = ESTABLISHED;
       m_connected = true;
       m_retxEvent.Cancel ();
-      m_tcb->m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
+      m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
       m_tcb->m_highTxMark = ++m_tcb->m_nextTxSequence;
       m_txBuffer->SetHeadSequence (m_tcb->m_nextTxSequence);
-      // Before sending packets, update the pacing rate based on RTT measurement so far 
-      UpdatePacingRate ();
       SendEmptyPacket (TcpHeader::ACK);
-
-      /* Check if we received an ECN SYN-ACK packet. Change the ECN state of sender to ECN_IDLE if receiver has sent an ECN SYN-ACK
-       * packet and the  traffic is ECN Capable
-       */
-      if (m_tcb->m_useEcn != TcpSocketState::Off && (tcpflags & (TcpHeader::CWR | TcpHeader::ECE)) == (TcpHeader::ECE))
-        {
-          NS_LOG_INFO ("Received ECN SYN-ACK packet.");
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_IDLE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-        }
-      else
-        {
-          m_tcb->m_ecnState = TcpSocketState::ECN_DISABLED;
-        }
       SendPendingData (m_connected);
       Simulator::ScheduleNow (&TcpSocketBase::ConnectionSucceeded, this);
       // Always respond to first data packet to speed up the connection.
@@ -2290,10 +2034,10 @@ TcpSocketBase::ProcessSynSent (Ptr<Packet> packet, const TcpHeader& tcpHeader)
     }
   else
     { // Other in-sequence input
-      if (!(tcpflags & TcpHeader::RST))
+      if (tcpflags != TcpHeader::RST)
         { // When (1) rx of FIN+ACK; (2) rx of FIN; (3) rx of bad flags
-          NS_LOG_LOGIC ("Illegal flag combination " << TcpHeader::FlagsToString (tcpHeader.GetFlags ()) <<
-                        " received in SYN_SENT. Reset packet is sent.");
+          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                        << " received. Reset packet is sent.");
           SendRST ();
         }
       CloseAndNotify ();
@@ -2302,24 +2046,23 @@ TcpSocketBase::ProcessSynSent (Ptr<Packet> packet, const TcpHeader& tcpHeader)
 
 /* Received a packet upon SYN_RCVD */
 void
-TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader& tcpHeader,
-                               const Address& fromAddress, 
-                               [[maybe_unused]] const Address& toAddress)
+TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader &tcpHeader,
+                               const Address &fromAddress, const Address &toAddress)
 {
+  NS_UNUSED (toAddress);
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH, URG, CWR and ECE are disregarded.
-  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG | TcpHeader::CWR | TcpHeader::ECE);
+  // Extract the flags. PSH and URG are not honoured.
+  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
-  if (tcpflags == 0
-      || (tcpflags == TcpHeader::ACK
-          && m_tcb->m_nextTxSequence + SequenceNumber32 (1) == tcpHeader.GetAckNumber ()))
+  if (tcpflags == 0 ||
+      (tcpflags == TcpHeader::ACK &&
+       m_tcb->m_nextTxSequence + SequenceNumber32 (1) == tcpHeader.GetAckNumber ()))
     { // If it is bare data, accept it and move to ESTABLISHED state. This is
       // possibly due to ACK lost in 3WHS. If in-sequence ACK is received, the
       // handshake is completed nicely.
       NS_LOG_DEBUG ("SYN_RCVD -> ESTABLISHED");
       m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_OPEN);
-      m_tcb->m_congState = TcpSocketState::CA_OPEN;
       m_state = ESTABLISHED;
       m_connected = true;
       m_retxEvent.Cancel ();
@@ -2340,8 +2083,6 @@ TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader& tcpHeader,
       m_delAckCount = m_delAckMaxCount;
       NotifyNewConnectionCreated (this, fromAddress);
       ReceivedAck (packet, tcpHeader);
-      // Update the pacing rate based on RTT measurement so far
-      UpdatePacingRate ();
       // As this connection is established, the socket is available to send data now
       if (GetTxAvailable () > 0)
         {
@@ -2350,26 +2091,12 @@ TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader& tcpHeader,
     }
   else if (tcpflags == TcpHeader::SYN)
     { // Probably the peer lost my SYN+ACK
-      m_tcb->m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
-      /* Check if we received an ECN SYN packet. Change the ECN state of receiver to ECN_IDLE if sender has sent an ECN SYN
-       * packet and the  traffic is ECN Capable
-       */
-      if (m_tcb->m_useEcn != TcpSocketState::Off && (tcpHeader.GetFlags () & (TcpHeader::CWR | TcpHeader::ECE)) == (TcpHeader::CWR | TcpHeader::ECE))
-        {
-          NS_LOG_INFO ("Received ECN SYN packet");
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK |TcpHeader::ECE);
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_IDLE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-       }
-      else
-        {
-          m_tcb->m_ecnState = TcpSocketState::ECN_DISABLED;
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
-        }
+      m_rxBuffer->SetNextRxSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (1));
+      SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
     }
   else if (tcpflags == (TcpHeader::FIN | TcpHeader::ACK))
     {
-      if (tcpHeader.GetSequenceNumber () == m_tcb->m_rxBuffer->NextRxSequence ())
+      if (tcpHeader.GetSequenceNumber () == m_rxBuffer->NextRxSequence ())
         { // In-sequence FIN before connection complete. Set up connection and close.
           m_connected = true;
           m_retxEvent.Cancel ();
@@ -2393,8 +2120,8 @@ TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader& tcpHeader,
     { // Other in-sequence input
       if (tcpflags != TcpHeader::RST)
         { // When (1) rx of SYN+ACK; (2) rx of FIN; (3) rx of bad flags
-          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags) <<
-                        " received. Reset packet is sent.");
+          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                        << " received. Reset packet is sent.");
           if (m_endPoint)
             {
               m_endPoint->SetPeer (InetSocketAddress::ConvertFrom (fromAddress).GetIpv4 (),
@@ -2413,12 +2140,12 @@ TcpSocketBase::ProcessSynRcvd (Ptr<Packet> packet, const TcpHeader& tcpHeader,
 
 /* Received a packet upon CLOSE_WAIT, FIN_WAIT_1, or FIN_WAIT_2 states */
 void
-TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH, URG, CWR and ECE are disregarded.
-  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG | TcpHeader::CWR | TcpHeader::ECE);
+  // Extract the flags. PSH and URG are not honoured.
+  uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   if (packet->GetSize () > 0 && !(tcpflags & TcpHeader::ACK))
     { // Bare data, accept it
@@ -2427,8 +2154,8 @@ TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
   else if (tcpflags == TcpHeader::ACK)
     { // Process the ACK, and if in FIN_WAIT_1, conditionally move to FIN_WAIT_2
       ReceivedAck (packet, tcpHeader);
-      if (m_state == FIN_WAIT_1 && m_txBuffer->Size () == 0
-          && tcpHeader.GetAckNumber () == m_tcb->m_highTxMark + SequenceNumber32 (1))
+      if (m_state == FIN_WAIT_1 && m_txBuffer->Size () == 0 &&
+          tcpHeader.GetAckNumber () == m_tcb->m_highTxMark + SequenceNumber32 (1))
         { // This ACK corresponds to the FIN sent
           NS_LOG_DEBUG ("FIN_WAIT_1 -> FIN_WAIT_2");
           m_state = FIN_WAIT_2;
@@ -2440,7 +2167,7 @@ TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
         { // Process the ACK first
           ReceivedAck (packet, tcpHeader);
         }
-      m_tcb->m_rxBuffer->SetFinSequence (tcpHeader.GetSequenceNumber ());
+      m_rxBuffer->SetFinSequence (tcpHeader.GetSequenceNumber ());
     }
   else if (tcpflags == TcpHeader::SYN || tcpflags == (TcpHeader::SYN | TcpHeader::ACK))
     { // Duplicated SYN or SYN+ACK, possibly due to spurious retransmission
@@ -2450,8 +2177,8 @@ TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
     { // This is a RST or bad flags
       if (tcpflags != TcpHeader::RST)
         {
-          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags) <<
-                        " received. Reset packet is sent.");
+          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                        << " received. Reset packet is sent.");
           SendRST ();
         }
       CloseAndNotify ();
@@ -2459,14 +2186,14 @@ TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
     }
 
   // Check if the close responder sent an in-sequence FIN, if so, respond ACK
-  if ((m_state == FIN_WAIT_1 || m_state == FIN_WAIT_2) && m_tcb->m_rxBuffer->Finished ())
+  if ((m_state == FIN_WAIT_1 || m_state == FIN_WAIT_2) && m_rxBuffer->Finished ())
     {
       if (m_state == FIN_WAIT_1)
         {
           NS_LOG_DEBUG ("FIN_WAIT_1 -> CLOSING");
           m_state = CLOSING;
-          if (m_txBuffer->Size () == 0
-              && tcpHeader.GetAckNumber () == m_tcb->m_highTxMark + SequenceNumber32 (1))
+          if (m_txBuffer->Size () == 0 &&
+              tcpHeader.GetAckNumber () == m_tcb->m_highTxMark + SequenceNumber32 (1))
             { // This ACK corresponds to the FIN sent
               TimeWait ();
             }
@@ -2485,16 +2212,16 @@ TcpSocketBase::ProcessWait (Ptr<Packet> packet, const TcpHeader& tcpHeader)
 
 /* Received a packet upon CLOSING */
 void
-TcpSocketBase::ProcessClosing (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ProcessClosing (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH and URG are disregarded.
+  // Extract the flags. PSH and URG are not honoured.
   uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   if (tcpflags == TcpHeader::ACK)
     {
-      if (tcpHeader.GetSequenceNumber () == m_tcb->m_rxBuffer->NextRxSequence ())
+      if (tcpHeader.GetSequenceNumber () == m_rxBuffer->NextRxSequence ())
         { // This ACK corresponds to the FIN sent
           TimeWait ();
         }
@@ -2508,7 +2235,8 @@ TcpSocketBase::ProcessClosing (Ptr<Packet> packet, const TcpHeader& tcpHeader)
         }
       else if (tcpflags != TcpHeader::RST)
         { // Receive of SYN or SYN+ACK or bad flags or pure data
-          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags) << " received. Reset packet is sent.");
+          NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                        << " received. Reset packet is sent.");
           SendRST ();
         }
       CloseAndNotify ();
@@ -2517,11 +2245,11 @@ TcpSocketBase::ProcessClosing (Ptr<Packet> packet, const TcpHeader& tcpHeader)
 
 /* Received a packet upon LAST_ACK */
 void
-TcpSocketBase::ProcessLastAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
+TcpSocketBase::ProcessLastAck (Ptr<Packet> packet, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
-  // Extract the flags. PSH and URG are disregarded.
+  // Extract the flags. PSH and URG are not honoured.
   uint8_t tcpflags = tcpHeader.GetFlags () & ~(TcpHeader::PSH | TcpHeader::URG);
 
   if (tcpflags == 0)
@@ -2530,7 +2258,7 @@ TcpSocketBase::ProcessLastAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
     }
   else if (tcpflags == TcpHeader::ACK)
     {
-      if (tcpHeader.GetSequenceNumber () == m_tcb->m_rxBuffer->NextRxSequence ())
+      if (tcpHeader.GetSequenceNumber () == m_rxBuffer->NextRxSequence ())
         { // This ACK corresponds to the FIN sent. This socket closed peacefully.
           CloseAndNotify ();
         }
@@ -2545,7 +2273,8 @@ TcpSocketBase::ProcessLastAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
     }
   else
     { // Received a SYN or SYN+ACK or bad flags
-      NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags) << " received. Reset packet is sent.");
+      NS_LOG_LOGIC ("Illegal flag " << TcpHeader::FlagsToString (tcpflags)
+                                    << " received. Reset packet is sent.");
       SendRST ();
       CloseAndNotify ();
     }
@@ -2553,26 +2282,27 @@ TcpSocketBase::ProcessLastAck (Ptr<Packet> packet, const TcpHeader& tcpHeader)
 
 /* Peer sent me a FIN. Remember its sequence in rx buffer. */
 void
-TcpSocketBase::PeerClose (Ptr<Packet> p, const TcpHeader& tcpHeader)
+TcpSocketBase::PeerClose (Ptr<Packet> p, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
 
   // Ignore all out of range packets
-  if (tcpHeader.GetSequenceNumber () < m_tcb->m_rxBuffer->NextRxSequence ()
-      || tcpHeader.GetSequenceNumber () > m_tcb->m_rxBuffer->MaxRxSequence ())
+  if (tcpHeader.GetSequenceNumber () < m_rxBuffer->NextRxSequence () ||
+      tcpHeader.GetSequenceNumber () > m_rxBuffer->MaxRxSequence ())
     {
       return;
     }
   // For any case, remember the FIN position in rx buffer first
-  m_tcb->m_rxBuffer->SetFinSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (p->GetSize ()));
-  NS_LOG_LOGIC ("Accepted FIN at seq " << tcpHeader.GetSequenceNumber () + SequenceNumber32 (p->GetSize ()));
+  m_rxBuffer->SetFinSequence (tcpHeader.GetSequenceNumber () + SequenceNumber32 (p->GetSize ()));
+  NS_LOG_LOGIC ("Accepted FIN at seq "
+                << tcpHeader.GetSequenceNumber () + SequenceNumber32 (p->GetSize ()));
   // If there is any piggybacked data, process it
   if (p->GetSize ())
     {
       ReceivedData (p, tcpHeader);
     }
   // Return if FIN is out of sequence, otherwise move to CLOSE_WAIT state by DoPeerClose
-  if (!m_tcb->m_rxBuffer->Finished ())
+  if (!m_rxBuffer->Finished ())
     {
       return;
     }
@@ -2592,8 +2322,8 @@ TcpSocketBase::PeerClose (Ptr<Packet> p, const TcpHeader& tcpHeader)
 void
 TcpSocketBase::DoPeerClose (void)
 {
-  NS_ASSERT (m_state == ESTABLISHED || m_state == SYN_RCVD ||
-             m_state == FIN_WAIT_1 || m_state == FIN_WAIT_2);
+  NS_ASSERT (m_state == ESTABLISHED || m_state == SYN_RCVD || m_state == FIN_WAIT_1 ||
+             m_state == FIN_WAIT_2);
 
   // Move the state to CLOSE_WAIT
   NS_LOG_DEBUG (TcpStateName[m_state] << " -> CLOSE_WAIT");
@@ -2621,7 +2351,6 @@ TcpSocketBase::DoPeerClose (void)
     }
   if (m_state == LAST_ACK)
     {
-      m_dataRetrCount = m_dataRetries; // prevent endless FINs
       NS_LOG_LOGIC ("TcpSocketBase " << this << " scheduling LATO1");
       Time lastRto = m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4);
       m_lastAckEvent = Simulator::Schedule (lastRto, &TcpSocketBase::LastAckTimeout, this);
@@ -2639,8 +2368,8 @@ TcpSocketBase::Destroy (void)
     {
       m_tcp->RemoveSocket (this);
     }
-  NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at " <<
-                (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
+  NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at "
+                     << (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
   CancelAllTimers ();
 }
 
@@ -2655,8 +2384,8 @@ TcpSocketBase::Destroy6 (void)
     {
       m_tcp->RemoveSocket (this);
     }
-  NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at " <<
-                (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
+  NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at "
+                     << (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
   CancelAllTimers ();
 }
 
@@ -2689,7 +2418,7 @@ TcpSocketBase::SendEmptyPacket (uint8_t flags)
 
   header.SetFlags (flags);
   header.SetSequenceNumber (s);
-  header.SetAckNumber (m_tcb->m_rxBuffer->NextRxSequence ());
+  header.SetAckNumber (m_rxBuffer->NextRxSequence ());
   if (m_endPoint != nullptr)
     {
       header.SetSourcePort (m_endPoint->GetLocalPort ());
@@ -2703,7 +2432,8 @@ TcpSocketBase::SendEmptyPacket (uint8_t flags)
   AddOptions (header);
 
   // RFC 6298, clause 2.4
-  m_rto = Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4), m_minRto);
+  m_rto =
+      Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4), m_minRto);
 
   uint16_t windowSize = AdvertisedWindowSize ();
   bool hasSyn = flags & TcpHeader::SYN;
@@ -2725,9 +2455,7 @@ TcpSocketBase::SendEmptyPacket (uint8_t flags)
         { // No more connection retries, give up
           NS_LOG_LOGIC ("Connection failed.");
           m_rtt->Reset (); //According to recommendation -> RFC 6298
-          NotifyConnectionFailed ();
-          m_state = CLOSED;
-          DeallocateEndPoint ();
+          CloseAndNotify ();
           return;
         }
       else
@@ -2758,28 +2486,27 @@ TcpSocketBase::SendEmptyPacket (uint8_t flags)
         {
           m_highTxAck = header.GetAckNumber ();
         }
-      if (m_sackEnabled && m_tcb->m_rxBuffer->GetSackListSize () > 0)
+      if (m_sackEnabled && m_rxBuffer->GetSackListSize () > 0)
         {
           AddOptionSack (header);
         }
-      NS_LOG_INFO ("Sending a pure ACK, acking seq " << m_tcb->m_rxBuffer->NextRxSequence ());
+      NS_LOG_INFO ("Sending a pure ACK, acking seq " << m_rxBuffer->NextRxSequence ());
     }
 
   m_txTrace (p, header, this);
 
   if (m_endPoint != nullptr)
     {
-      m_tcp->SendPacket (p, header, m_endPoint->GetLocalAddress (),
-                         m_endPoint->GetPeerAddress (), m_boundnetdevice);
+      m_tcp->SendPacket (p, header, m_endPoint->GetLocalAddress (), m_endPoint->GetPeerAddress (),
+                         m_boundnetdevice);
     }
   else
     {
-      m_tcp->SendPacket (p, header, m_endPoint6->GetLocalAddress (),
-                         m_endPoint6->GetPeerAddress (), m_boundnetdevice);
+      m_tcp->SendPacket (p, header, m_endPoint6->GetLocalAddress (), m_endPoint6->GetPeerAddress (),
+                         m_boundnetdevice);
     }
 
-
-  if (m_retxEvent.IsExpired () && (hasSyn || hasFin) && !isAck )
+  if (m_retxEvent.IsExpired () && (hasSyn || hasFin) && !isAck)
     { // Retransmit SYN / SYN+ACK / FIN / FIN+ACK to guard against lost
       NS_LOG_LOGIC ("Schedule retransmission timeout at time "
                     << Simulator::Now ().GetSeconds () << " to expire at time "
@@ -2864,7 +2591,7 @@ TcpSocketBase::SetupEndpoint6 ()
   // Create a dummy packet, then ask the routing function for the best output
   // interface's address
   Ipv6Header header;
-  header.SetDestination (m_endPoint6->GetPeerAddress ());
+  header.SetDestinationAddress (m_endPoint6->GetPeerAddress ());
   Socket::SocketErrno errno_;
   Ptr<Ipv6Route> route;
   Ptr<NetDevice> oif = m_boundnetdevice;
@@ -2885,10 +2612,10 @@ TcpSocketBase::SetupEndpoint6 ()
    TcpSocketBase cloned, allocate a new end point to handle the incoming
    connection and send a SYN+ACK to complete the handshake. */
 void
-TcpSocketBase::CompleteFork ([[maybe_unused]] Ptr<Packet> p, const TcpHeader& h,
-                             const Address& fromAddress, const Address& toAddress)
+TcpSocketBase::CompleteFork (Ptr<Packet> p, const TcpHeader &h, const Address &fromAddress,
+                             const Address &toAddress)
 {
-  NS_LOG_FUNCTION (this << p << h << fromAddress << toAddress);
+  NS_UNUSED (p);
   // Get port and address from peer (connecting host)
   if (InetSocketAddress::IsMatchingType (toAddress))
     {
@@ -2917,23 +2644,9 @@ TcpSocketBase::CompleteFork ([[maybe_unused]] Ptr<Packet> p, const TcpHeader& h,
   m_dataRetrCount = m_dataRetries;
   SetupCallback ();
   // Set the sequence number and send SYN+ACK
-  m_tcb->m_rxBuffer->SetNextRxSequence (h.GetSequenceNumber () + SequenceNumber32 (1));
+  m_rxBuffer->SetNextRxSequence (h.GetSequenceNumber () + SequenceNumber32 (1));
 
-  /* Check if we received an ECN SYN packet. Change the ECN state of receiver to ECN_IDLE if sender has sent an ECN SYN
-   * packet and the traffic is ECN Capable
-   */
-  if (m_tcb->m_useEcn != TcpSocketState::Off &&
-      (h.GetFlags () & (TcpHeader::CWR | TcpHeader::ECE)) == (TcpHeader::CWR | TcpHeader::ECE))
-    {
-      SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK | TcpHeader::ECE);
-      NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_IDLE");
-      m_tcb->m_ecnState = TcpSocketState::ECN_IDLE;
-    }
-  else
-    {
-      SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
-      m_tcb->m_ecnState = TcpSocketState::ECN_DISABLED;
-    }
+  SendEmptyPacket (TcpHeader::SYN | TcpHeader::ACK);
 }
 
 void
@@ -2962,49 +2675,15 @@ TcpSocketBase::AddSocketTags (const Ptr<Packet> &p) const
   if (GetIpTos ())
     {
       SocketIpTosTag ipTosTag;
-      if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && !CheckNoEcn (GetIpTos ()))
-        {
-          ipTosTag.SetTos (MarkEcnCodePoint (GetIpTos (), m_tcb->m_ectCodePoint));
-        }
-      else
-        {
-          // Set the last received ipTos
-          ipTosTag.SetTos (GetIpTos ());
-        }
+      ipTosTag.SetTos (GetIpTos ());
       p->AddPacketTag (ipTosTag);
-    }
-  else
-    {
-      if ((m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize () > 0) || m_tcb->m_ecnMode == TcpSocketState::DctcpEcn)
-        {
-          SocketIpTosTag ipTosTag;
-          ipTosTag.SetTos (MarkEcnCodePoint (GetIpTos (), m_tcb->m_ectCodePoint));
-          p->AddPacketTag (ipTosTag);
-        }
     }
 
   if (IsManualIpv6Tclass ())
     {
       SocketIpv6TclassTag ipTclassTag;
-      if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && !CheckNoEcn (GetIpv6Tclass ()))
-        {
-          ipTclassTag.SetTclass (MarkEcnCodePoint (GetIpv6Tclass (), m_tcb->m_ectCodePoint));
-        }
-      else
-        {
-          // Set the last received ipTos
-          ipTclassTag.SetTclass (GetIpv6Tclass ());
-        }
+      ipTclassTag.SetTclass (GetIpv6Tclass ());
       p->AddPacketTag (ipTclassTag);
-    }
-  else
-    {
-      if ((m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize () > 0) || m_tcb->m_ecnMode == TcpSocketState::DctcpEcn)
-        {
-          SocketIpv6TclassTag ipTclassTag;
-          ipTclassTag.SetTclass (MarkEcnCodePoint (GetIpv6Tclass (), m_tcb->m_ectCodePoint));
-          p->AddPacketTag (ipTclassTag);
-        }
     }
 
   if (IsManualIpTtl ())
@@ -3029,7 +2708,6 @@ TcpSocketBase::AddSocketTags (const Ptr<Packet> &p) const
       p->ReplacePacketTag (priorityTag);
     }
 }
-
 /* Extract at most maxSize bytes from the TxBuffer at sequence seq, add the
     TCP header, and send to TcpL4Protocol */
 uint32_t
@@ -3037,53 +2715,37 @@ TcpSocketBase::SendDataPacket (SequenceNumber32 seq, uint32_t maxSize, bool with
 {
   NS_LOG_FUNCTION (this << seq << maxSize << withAck);
 
-  bool isStartOfTransmission = BytesInFlight () == 0U;
-  TcpTxItem *outItem = m_txBuffer->CopyFromSequence (maxSize, seq);
+  bool isRetransmission = false;
+  if (seq != m_tcb->m_highTxMark)
+    {
+      isRetransmission = true;
+    }
 
-  m_rateOps->SkbSent(outItem, isStartOfTransmission);
-
-  bool isRetransmission = outItem->IsRetrans ();
-  Ptr<Packet> p = outItem->GetPacketCopy ();
+  Ptr<Packet> p = m_txBuffer->CopyFromSequence (maxSize, seq);
   uint32_t sz = p->GetSize (); // Size of packet
   uint8_t flags = withAck ? TcpHeader::ACK : 0;
   uint32_t remainingData = m_txBuffer->SizeFromSequence (seq + SequenceNumber32 (sz));
 
-  // TCP sender should not send data out of the window advertised by the
-  // peer when it is not retransmission.
-  NS_ASSERT (isRetransmission || ((m_highRxAckMark + SequenceNumber32 (m_rWnd)) >= (seq + SequenceNumber32 (maxSize))));
-
-  if (IsPacingEnabled ())
+  if (m_tcb->m_pacing)
     {
       NS_LOG_INFO ("Pacing is enabled");
       if (m_pacingTimer.IsExpired ())
         {
-          NS_LOG_DEBUG ("Current Pacing Rate " << m_tcb->m_pacingRate);
-          NS_LOG_DEBUG ("Timer is in expired state, activate it " << m_tcb->m_pacingRate.Get ().CalculateBytesTxTime (sz));
-          m_pacingTimer.Schedule (m_tcb->m_pacingRate.Get ().CalculateBytesTxTime (sz));
+          NS_LOG_DEBUG ("Current Pacing Rate " << m_tcb->m_currentPacingRate);
+          NS_LOG_DEBUG ("Timer is in expired state, activate it "
+                        << m_tcb->m_currentPacingRate.CalculateBytesTxTime (sz));
+          m_pacingTimer.Schedule (m_tcb->m_currentPacingRate.CalculateBytesTxTime (sz));
         }
       else
         {
           NS_LOG_INFO ("Timer is already in running state");
         }
     }
-  else
-    {
-      NS_LOG_INFO ("Pacing is disabled");
-    }
 
   if (withAck)
     {
       m_delAckEvent.Cancel ();
       m_delAckCount = 0;
-    }
-
-  if (m_tcb->m_ecnState == TcpSocketState::ECN_ECE_RCVD && m_ecnEchoSeq.Get() > m_ecnCWRSeq.Get () && !isRetransmission)
-    {
-      NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_CWR_SENT");
-      m_tcb->m_ecnState = TcpSocketState::ECN_CWR_SENT;
-      m_ecnCWRSeq = seq;
-      flags |= TcpHeader::CWR;
-      NS_LOG_INFO ("CWR flags set");
     }
 
   AddSocketTags (p);
@@ -3105,7 +2767,7 @@ TcpSocketBase::SendDataPacket (SequenceNumber32 seq, uint32_t maxSize, bool with
   TcpHeader header;
   header.SetFlags (flags);
   header.SetSequenceNumber (seq);
-  header.SetAckNumber (m_tcb->m_rxBuffer->NextRxSequence ());
+  header.SetAckNumber (m_rxBuffer->NextRxSequence ());
   if (m_endPoint)
     {
       header.SetSourcePort (m_endPoint->GetLocalPort ());
@@ -3123,9 +2785,9 @@ TcpSocketBase::SendDataPacket (SequenceNumber32 seq, uint32_t maxSize, bool with
     {
       // Schedules retransmit timeout. m_rto should be already doubled.
 
-      NS_LOG_LOGIC (this << " SendDataPacket Schedule ReTxTimeout at time " <<
-                    Simulator::Now ().GetSeconds () << " to expire at time " <<
-                    (Simulator::Now () + m_rto.Get ()).GetSeconds () );
+      NS_LOG_LOGIC (this << " SendDataPacket Schedule ReTxTimeout at time "
+                         << Simulator::Now ().GetSeconds () << " to expire at time "
+                         << (Simulator::Now () + m_rto.Get ()).GetSeconds ());
       m_retxEvent = Simulator::Schedule (m_rto, &TcpSocketBase::ReTxTimeout, this);
     }
 
@@ -3133,43 +2795,60 @@ TcpSocketBase::SendDataPacket (SequenceNumber32 seq, uint32_t maxSize, bool with
 
   if (m_endPoint)
     {
-      m_tcp->SendPacket (p, header, m_endPoint->GetLocalAddress (),
-                         m_endPoint->GetPeerAddress (), m_boundnetdevice);
-      NS_LOG_DEBUG ("Send segment of size " << sz << " with remaining data " <<
-                    remainingData << " via TcpL4Protocol to " <<  m_endPoint->GetPeerAddress () <<
-                    ". Header " << header);
+      m_tcp->SendPacket (p, header, m_endPoint->GetLocalAddress (), m_endPoint->GetPeerAddress (),
+                         m_boundnetdevice);
+      NS_LOG_DEBUG ("Send segment of size "
+                    << sz << " with remaining data " << remainingData << " via TcpL4Protocol to "
+                    << m_endPoint->GetPeerAddress () << ". Header " << header);
     }
   else
     {
-      m_tcp->SendPacket (p, header, m_endPoint6->GetLocalAddress (),
-                         m_endPoint6->GetPeerAddress (), m_boundnetdevice);
-      NS_LOG_DEBUG ("Send segment of size " << sz << " with remaining data " <<
-                    remainingData << " via TcpL4Protocol to " <<  m_endPoint6->GetPeerAddress () <<
-                    ". Header " << header);
+      m_tcp->SendPacket (p, header, m_endPoint6->GetLocalAddress (), m_endPoint6->GetPeerAddress (),
+                         m_boundnetdevice);
+      NS_LOG_DEBUG ("Send segment of size "
+                    << sz << " with remaining data " << remainingData << " via TcpL4Protocol to "
+                    << m_endPoint6->GetPeerAddress () << ". Header " << header);
     }
 
   UpdateRttHistory (seq, sz, isRetransmission);
 
-  // Update bytes sent during recovery phase
-  if (m_tcb->m_congState == TcpSocketState::CA_RECOVERY || m_tcb->m_congState == TcpSocketState::CA_CWR)
-    {
-      m_recoveryOps->UpdateBytesSent (sz);
-    }
-
   // Notify the application of the data being sent unless this is a retransmit
-  if (!isRetransmission)
+  if (seq + sz > m_tcb->m_highTxMark)
     {
       Simulator::ScheduleNow (&TcpSocketBase::NotifyDataSent, this,
                               (seq + sz - m_tcb->m_highTxMark.Get ()));
     }
+
   // Update highTxMark
   m_tcb->m_highTxMark = std::max (seq + sz, m_tcb->m_highTxMark.Get ());
+  m_txBuffer->UpdatePacketSent (seq, sz);
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+  if (!calculateThroughputInitialized)
+    {
+      CalculateThroughputPerSecond ();
+    }
+  if (isRetransmission)
+    {
+      reTxPktsPerSecSize += p->GetSize ();
+      totalReTxPktsSize += p->GetSize ();
+      reTxPktsPerSec++;
+      totalReTxPkts++;
+    }
+  else
+    {
+      actualSentPktsPerSecSize += p->GetSize ();
+      totalActualSentPktsSize += p->GetSize ();
+      actualSentPktsPerSec++;
+      totalActualSentPkts++;
+    }
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
+
   return sz;
 }
 
 void
-TcpSocketBase::UpdateRttHistory (const SequenceNumber32 &seq, uint32_t sz,
-                                 bool isRetransmission)
+TcpSocketBase::UpdateRttHistory (const SequenceNumber32 &seq, uint32_t sz, bool isRetransmission)
 {
   NS_LOG_FUNCTION (this);
 
@@ -3199,11 +2878,12 @@ TcpSocketBase::SendPendingData (bool withAck)
   NS_LOG_FUNCTION (this << withAck);
   if (m_txBuffer->Size () == 0)
     {
-      return false;                           // Nothing to send
+      return false; // Nothing to send
     }
   if (m_endPoint == nullptr && m_endPoint6 == nullptr)
     {
-      NS_LOG_INFO ("TcpSocketBase::SendPendingData: No endpoint; m_shutdownSend=" << m_shutdownSend);
+      NS_LOG_INFO (
+          "TcpSocketBase::SendPendingData: No endpoint; m_shutdownSend=" << m_shutdownSend);
       return false; // Is this the right way to handle this condition?
     }
 
@@ -3217,7 +2897,7 @@ TcpSocketBase::SendPendingData (bool withAck)
   // else branch to control silly window syndrome and Nagle)
   while (availableWindow > 0)
     {
-      if (IsPacingEnabled ())
+      if (m_tcb->m_pacing)
         {
           NS_LOG_INFO ("Pacing is enabled");
           if (m_pacingTimer.IsRunning ())
@@ -3228,8 +2908,7 @@ TcpSocketBase::SendPendingData (bool withAck)
           NS_LOG_INFO ("Timer is not running");
         }
 
-      if (m_tcb->m_congState == TcpSocketState::CA_OPEN
-          && m_state == TcpSocket::FIN_WAIT_1)
+      if (m_tcb->m_congState == TcpSocketState::CA_OPEN && m_state == TcpSocket::FIN_WAIT_1)
         {
           NS_LOG_INFO ("FIN_WAIT and OPEN state; no data to transmit");
           break;
@@ -3240,9 +2919,8 @@ TcpSocketBase::SendPendingData (bool withAck)
       //       failure (no data to send), return without sending anything
       //       (i.e., terminate steps C.1 -- C.5).
       SequenceNumber32 next;
-      SequenceNumber32 nextHigh;
       bool enableRule3 = m_sackEnabled && m_tcb->m_congState == TcpSocketState::CA_RECOVERY;
-      if (!m_txBuffer->NextSeg (&next, &nextHigh, enableRule3))
+      if (!m_txBuffer->NextSeg (&next, enableRule3))
         {
           NS_LOG_INFO ("no valid seq to transmit, or no data available");
           break;
@@ -3270,16 +2948,13 @@ TcpSocketBase::SendPendingData (bool withAck)
           // in the buffer and the amount of data to send is less than one segment
           if (!m_noDelay && UnAckDataCount () > 0 && availableData < m_tcb->m_segmentSize)
             {
-              NS_LOG_DEBUG ("Invoking Nagle's algorithm for seq " << next <<
-                            ", SFS: " << m_txBuffer->SizeFromSequence (next) <<
-                            ". Wait to send.");
+              NS_LOG_DEBUG ("Invoking Nagle's algorithm for seq "
+                            << next << ", SFS: " << m_txBuffer->SizeFromSequence (next)
+                            << ". Wait to send.");
               break;
             }
 
           uint32_t s = std::min (availableWindow, m_tcb->m_segmentSize);
-          // NextSeg () may have further constrained the segment size
-          uint32_t maxSizeToSend = static_cast<uint32_t> (nextHigh - next);
-          s = std::min (s, maxSizeToSend);
 
           // (C.2) If any of the data octets sent in (C.1) are below HighData,
           //       HighRxt MUST be set to the highest sequence number of the
@@ -3299,27 +2974,25 @@ TcpSocketBase::SendPendingData (bool withAck)
               m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_TX_START);
             }
           uint32_t sz = SendDataPacket (m_tcb->m_nextTxSequence, s, withAck);
-
-          NS_LOG_LOGIC (" rxwin " << m_rWnd <<
-                        " segsize " << m_tcb->m_segmentSize <<
-                        " highestRxAck " << m_txBuffer->HeadSequence () <<
-                        " pd->Size " << m_txBuffer->Size () <<
-                        " pd->SFS " << m_txBuffer->SizeFromSequence (m_tcb->m_nextTxSequence));
-
-          NS_LOG_DEBUG ("cWnd: " << m_tcb->m_cWnd <<
-                        " total unAck: " << UnAckDataCount () <<
-                        " sent seq " << m_tcb->m_nextTxSequence <<
-                        " size " << sz);
           m_tcb->m_nextTxSequence += sz;
+
+          NS_LOG_LOGIC (" rxwin " << m_rWnd << " segsize " << m_tcb->m_segmentSize
+                                  << " highestRxAck " << m_txBuffer->HeadSequence () << " pd->Size "
+                                  << m_txBuffer->Size () << " pd->SFS "
+                                  << m_txBuffer->SizeFromSequence (m_tcb->m_nextTxSequence));
+
+          NS_LOG_DEBUG ("cWnd: " << m_tcb->m_cWnd << " total unAck: " << UnAckDataCount ()
+                                 << " sent seq " << m_tcb->m_nextTxSequence << " size " << sz);
           ++nPacketsSent;
-          if (IsPacingEnabled ())
+          if (m_tcb->m_pacing)
             {
               NS_LOG_INFO ("Pacing is enabled");
               if (m_pacingTimer.IsExpired ())
                 {
-                  NS_LOG_DEBUG ("Current Pacing Rate " << m_tcb->m_pacingRate);
-                  NS_LOG_DEBUG ("Timer is in expired state, activate it " << m_tcb->m_pacingRate.Get ().CalculateBytesTxTime (sz));
-                  m_pacingTimer.Schedule (m_tcb->m_pacingRate.Get ().CalculateBytesTxTime (sz));
+                  NS_LOG_DEBUG ("Current Pacing Rate " << m_tcb->m_currentPacingRate);
+                  NS_LOG_DEBUG ("Timer is in expired state, activate it "
+                                << m_tcb->m_currentPacingRate.CalculateBytesTxTime (sz));
+                  m_pacingTimer.Schedule (m_tcb->m_currentPacingRate.CalculateBytesTxTime (sz));
                   break;
                 }
             }
@@ -3383,7 +3056,7 @@ TcpSocketBase::Window (void) const
 uint32_t
 TcpSocketBase::AvailableWindow () const
 {
-  uint32_t win = Window ();             // Number of bytes allowed to be outstanding
+  uint32_t win = Window (); // Number of bytes allowed to be outstanding
   uint32_t inflight = BytesInFlight (); // Number of outstanding bytes
   return (inflight > win) ? 0 : win - inflight;
 }
@@ -3396,22 +3069,22 @@ TcpSocketBase::AdvertisedWindowSize (bool scale) const
 
   // We don't want to advertise 0 after a FIN is received. So, we just use
   // the previous value of the advWnd.
-  if (m_tcb->m_rxBuffer->GotFin ())
+  if (m_rxBuffer->GotFin ())
     {
       w = m_advWnd;
     }
   else
     {
-      NS_ASSERT_MSG (m_tcb->m_rxBuffer->MaxRxSequence () - m_tcb->m_rxBuffer->NextRxSequence () >= 0,
-                     "Unexpected sequence number values");
-      w = static_cast<uint32_t> (m_tcb->m_rxBuffer->MaxRxSequence () - m_tcb->m_rxBuffer->NextRxSequence ());
+      uint32_t max = m_rxBuffer->MaxRxSequence ().GetValue ();
+      uint32_t next = m_rxBuffer->NextRxSequence ().GetValue ();
+      w = (max > next) ? max - next : 0;
     }
 
   // Ugly, but we are not modifying the state, that variable
   // is used only for tracing purpose.
   if (w != m_advWnd)
     {
-      const_cast<TcpSocketBase*> (this)->m_advWnd = w;
+      const_cast<TcpSocketBase *> (this)->m_advWnd = w;
     }
   if (scale)
     {
@@ -3420,39 +3093,128 @@ TcpSocketBase::AdvertisedWindowSize (bool scale) const
   if (w > m_maxWinSize)
     {
       w = m_maxWinSize;
-      NS_LOG_WARN ("Adv window size truncated to " << m_maxWinSize << "; possibly to avoid overflow of the 16-bit integer");
+      NS_LOG_WARN ("Adv window size truncated to "
+                   << m_maxWinSize << "; possibly to avoid overflow of the 16-bit integer");
     }
   NS_LOG_LOGIC ("Returning AdvertisedWindowSize of " << static_cast<uint16_t> (w));
   return static_cast<uint16_t> (w);
 }
 
+//Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+
+void
+TcpSocketBase::CalculateThroughputPerSecond (void)
+{
+
+  double throughput = 0.0;
+  throughput = (totalReceivedPktsSize * 8 / (1000000.0)) - prevThroughput;
+  prevThroughput = (totalReceivedPktsSize * 8) / (1000000.0);
+
+  double goodput = 0.0;
+  goodput = (totalActualReceivedPktsSize * 8 / (1000000.0)) - prevGoodput;
+  prevGoodput = (totalActualReceivedPktsSize * 8) / (1000000.0);
+
+  // if(this->IsInitialized())
+  //{
+  if (!calculateThroughputInitialized)
+    {
+      calculateThroughputInitialized = true;
+      std::ofstream traceAll ("Throughput_for_node_" + std::to_string (this->GetNode ()->GetId ()) +
+                                  ".data",
+                              std::ofstream::out | std::ofstream::trunc);
+    }
+  std::ofstream traceAll ("Throughput_for_node_" + std::to_string (this->GetNode ()->GetId ()) +
+                              ".data",
+                          std::ofstream::out | std::ofstream::app);
+  // Always check to see if the file is open and for errors.
+  if (traceAll.is_open ())
+    {
+      // If it is open we can do our writing to the file.
+      // Here is a example of this.
+      traceAll << Simulator::Now ().GetSeconds () << "\t";
+
+      traceAll << throughput << "\t"; //throughput in Mbps
+
+      traceAll << goodput << "\t"; //goodput in Mbps
+
+      traceAll << (receivedPktsSizePerSec / 476) << "\t";
+      receivedPktsSizePerSec = 0;
+
+      traceAll << (totalReceivedPktsSize / 476) << "\t"; //goodput in Mbps
+
+      traceAll << (actualReceivedPktsSizePerSec / 476) << "\t";
+      actualReceivedPktsSizePerSec = 0;
+
+      traceAll << (totalActualReceivedPktsSize / 476) << "\t"; //goodput in Mbps
+
+      traceAll << (actualSentPktsPerSec) << "\t";
+      actualSentPktsPerSec = 0;
+
+      traceAll << (totalActualSentPkts) << "\t";
+
+      traceAll << (reTxPktsPerSec) << "\t";
+      reTxPktsPerSec = 0;
+
+      traceAll << (totalReTxPkts) << "\n";
+
+      /*
+		  traceAll << (actualSentPktsPerSecSize) << "\t";
+		  actualSentPktsPerSec = 0;
+
+		  traceAll << (totalActualSentPktsSize) << "\t";
+
+		  traceAll << (reTxPktsPerSecSize) << "\t";
+		  reTxPktsPerSec = 0;
+
+		  traceAll << (totalReTxPktsSize) << "\n";
+	`	  */
+    }
+  else
+    {
+      // If the file isn't open something went wrong. Point that out.
+      std::cout << "Something went wrong with opening the file!";
+    }
+  // }
+
+  //calculateThroughputTimer.Schedule(Seconds(1.0));
+  Simulator::Schedule (Seconds (1.0), &TcpSocketBase::CalculateThroughputPerSecond, this);
+}
+
+//Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
+
 // Receipt of new packet, put into Rx buffer
 void
-TcpSocketBase::ReceivedData (Ptr<Packet> p, const TcpHeader& tcpHeader)
+TcpSocketBase::ReceivedData (Ptr<Packet> p, const TcpHeader &tcpHeader)
 {
   NS_LOG_FUNCTION (this << tcpHeader);
-  NS_LOG_DEBUG ("Data segment, seq=" << tcpHeader.GetSequenceNumber () <<
-                " pkt size=" << p->GetSize () );
+  NS_LOG_DEBUG ("Data segment, seq=" << tcpHeader.GetSequenceNumber ()
+                                     << " pkt size=" << p->GetSize ());
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+  if (!calculateThroughputInitialized)
+    {
+      CalculateThroughputPerSecond ();
+    }
+  receivedPktsSizePerSec += p->GetSize ();
+  totalReceivedPktsSize += p->GetSize ();
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
 
   // Put into Rx buffer
-  SequenceNumber32 expectedSeq = m_tcb->m_rxBuffer->NextRxSequence ();
-  if (!m_tcb->m_rxBuffer->Add (p, tcpHeader))
+  SequenceNumber32 expectedSeq = m_rxBuffer->NextRxSequence ();
+  if (!m_rxBuffer->Add (p, tcpHeader))
     { // Insert failed: No data or RX buffer full
-      if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-        {
-          SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_SENDING_ECE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-        }
-      else
-        {
-          SendEmptyPacket (TcpHeader::ACK);
-        }
+      SendEmptyPacket (TcpHeader::ACK);
       return;
     }
   // Notify app to receive if necessary
-  if (expectedSeq < m_tcb->m_rxBuffer->NextRxSequence ())
+  if (expectedSeq < m_rxBuffer->NextRxSequence ())
     { // NextRxSeq advanced, we have something to send to the app
+
+      //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+      actualReceivedPktsSizePerSec += p->GetSize ();
+      totalActualReceivedPktsSize += p->GetSize ();
+      //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
+
       if (!m_shutdownRecv)
         {
           NotifyDataRecv ();
@@ -3464,26 +3226,18 @@ TcpSocketBase::ReceivedData (Ptr<Packet> p, const TcpHeader& tcpHeader)
         }
       // If we received FIN before and now completed all "holes" in rx buffer,
       // invoke peer close procedure
-      if (m_tcb->m_rxBuffer->Finished () && (tcpHeader.GetFlags () & TcpHeader::FIN) == 0)
+      if (m_rxBuffer->Finished () && (tcpHeader.GetFlags () & TcpHeader::FIN) == 0)
         {
           DoPeerClose ();
           return;
         }
     }
   // Now send a new ACK packet acknowledging all received and delivered data
-  if (m_tcb->m_rxBuffer->Size () > m_tcb->m_rxBuffer->Available () || m_tcb->m_rxBuffer->NextRxSequence () > expectedSeq + p->GetSize ())
+  if (m_rxBuffer->Size () > m_rxBuffer->Available () ||
+      m_rxBuffer->NextRxSequence () > expectedSeq + p->GetSize ())
     { // A gap exists in the buffer, or we filled a gap: Always ACK
       m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_NON_DELAYED_ACK);
-      if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-        {
-          SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_SENDING_ECE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-        }
-      else
-        {
-          SendEmptyPacket (TcpHeader::ACK);
-        }
+      SendEmptyPacket (TcpHeader::ACK);
     }
   else
     { // In-sequence packet: ACK if delayed ack count allows
@@ -3492,35 +3246,28 @@ TcpSocketBase::ReceivedData (Ptr<Packet> p, const TcpHeader& tcpHeader)
           m_delAckEvent.Cancel ();
           m_delAckCount = 0;
           m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_NON_DELAYED_ACK);
-          if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-            {
-              NS_LOG_DEBUG("Congestion algo " << m_congestionControl->GetName ());
-              SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-              NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_SENDING_ECE");
-              m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-            }
-          else
-            {
-              SendEmptyPacket (TcpHeader::ACK);
-            }
-        }
-      else if (!m_delAckEvent.IsExpired ())
-        {
-          m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_DELAYED_ACK);
+          SendEmptyPacket (TcpHeader::ACK);
         }
       else if (m_delAckEvent.IsExpired ())
         {
-          m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_DELAYED_ACK);
-          m_delAckEvent = Simulator::Schedule (m_delAckTimeout,
-                                               &TcpSocketBase::DelAckTimeout, this);
-          NS_LOG_LOGIC (this << " scheduled delayed ACK at " <<
-                        (Simulator::Now () + Simulator::GetDelayLeft (m_delAckEvent)).GetSeconds ());
+          m_delAckEvent =
+              Simulator::Schedule (m_delAckTimeout, &TcpSocketBase::DelAckTimeout, this);
+          NS_LOG_LOGIC (
+              this << " scheduled delayed ACK at "
+                   << (Simulator::Now () + Simulator::GetDelayLeft (m_delAckEvent)).GetSeconds ());
         }
     }
 }
 
+/**
+ * \brief Estimate the RTT
+ *
+ * Called by ForwardUp() to estimate RTT.
+ *
+ * \param tcpHeader TCP header for the incoming packet
+ */
 void
-TcpSocketBase::EstimateRtt (const TcpHeader& tcpHeader)
+TcpSocketBase::EstimateRtt (const TcpHeader &tcpHeader)
 {
   SequenceNumber32 ackSeq = tcpHeader.GetAckNumber ();
   Time m = Time (0.0);
@@ -3530,7 +3277,7 @@ TcpSocketBase::EstimateRtt (const TcpHeader& tcpHeader)
   // case the ack'ed packet will be at the head of the list
   if (!m_history.empty ())
     {
-      RttHistory& h = m_history.front ();
+      RttHistory &h = m_history.front ();
       if (!h.retx && ackSeq >= (h.seq + SequenceNumber32 (h.count)))
         { // Ok to use this sample
           if (m_timestampEnabled && tcpHeader.HasOption (TcpOption::TS))
@@ -3538,11 +3285,6 @@ TcpSocketBase::EstimateRtt (const TcpHeader& tcpHeader)
               Ptr<const TcpOptionTS> ts;
               ts = DynamicCast<const TcpOptionTS> (tcpHeader.GetOption (TcpOption::TS));
               m = TcpOptionTS::ElapsedTimeFromTsValue (ts->GetEcho ());
-              if (m.IsZero ())
-                {
-                  NS_LOG_LOGIC ("TcpSocketBase::EstimateRtt - RTT calculated from TcpOption::TS is zero, approximating to 1us.");
-                  m = MicroSeconds (1);
-                }
             }
           else
             {
@@ -3554,19 +3296,20 @@ TcpSocketBase::EstimateRtt (const TcpHeader& tcpHeader)
   // Now delete all ack history with seq <= ack
   while (!m_history.empty ())
     {
-      RttHistory& h = m_history.front ();
+      RttHistory &h = m_history.front ();
       if ((h.seq + SequenceNumber32 (h.count)) > ackSeq)
         {
-          break;                                                              // Done removing
+          break; // Done removing
         }
       m_history.pop_front (); // Remove
     }
 
   if (!m.IsZero ())
     {
-      m_rtt->Measurement (m);                // Log the measurement
+      m_rtt->Measurement (m); // Log the measurement
       // RFC 6298, clause 2.4
-      m_rto = Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4), m_minRto);
+      m_rto = Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4),
+                   m_minRto);
       m_tcb->m_lastRtt = m_rtt->GetEstimate ();
       m_tcb->m_minRtt = std::min (m_tcb->m_lastRtt.Get (), m_tcb->m_minRtt);
       NS_LOG_INFO (this << m_tcb->m_lastRtt << m_tcb->m_minRtt);
@@ -3577,7 +3320,7 @@ TcpSocketBase::EstimateRtt (const TcpHeader& tcpHeader)
 // when the three-way handshake completed. This cancels retransmission timer
 // and advances Tx window
 void
-TcpSocketBase::NewAck (SequenceNumber32 const& ack, bool resetRTO)
+TcpSocketBase::NewAck (SequenceNumber32 const &ack, bool resetRTO)
 {
   NS_LOG_FUNCTION (this << ack);
 
@@ -3586,22 +3329,24 @@ TcpSocketBase::NewAck (SequenceNumber32 const& ack, bool resetRTO)
 
   if (m_state != SYN_RCVD && resetRTO)
     { // Set RTO unless the ACK is received in SYN_RCVD state
-      NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at " <<
-                    (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
+      NS_LOG_LOGIC (
+          this << " Cancelled ReTxTimeout event which was set to expire at "
+               << (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
       m_retxEvent.Cancel ();
       // On receiving a "New" ack we restart retransmission timer .. RFC 6298
       // RFC 6298, clause 2.4
-      m_rto = Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4), m_minRto);
+      m_rto = Max (m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4),
+                   m_minRto);
 
-      NS_LOG_LOGIC (this << " Schedule ReTxTimeout at time " <<
-                    Simulator::Now ().GetSeconds () << " to expire at time " <<
-                    (Simulator::Now () + m_rto.Get ()).GetSeconds ());
+      NS_LOG_LOGIC (this << " Schedule ReTxTimeout at time " << Simulator::Now ().GetSeconds ()
+                         << " to expire at time "
+                         << (Simulator::Now () + m_rto.Get ()).GetSeconds ());
       m_retxEvent = Simulator::Schedule (m_rto, &TcpSocketBase::ReTxTimeout, this);
     }
 
   // Note the highest ACK and tell app to send more
-  NS_LOG_LOGIC ("TCP " << this << " NewAck " << ack <<
-                " numberAck " << (ack - m_txBuffer->HeadSequence ())); // Number bytes ack'ed
+  NS_LOG_LOGIC ("TCP " << this << " NewAck " << ack << " numberAck "
+                       << (ack - m_txBuffer->HeadSequence ())); // Number bytes ack'ed
 
   if (GetTxAvailable () > 0)
     {
@@ -3613,8 +3358,9 @@ TcpSocketBase::NewAck (SequenceNumber32 const& ack, bool resetRTO)
     }
   if (m_txBuffer->Size () == 0 && m_state != FIN_WAIT_1 && m_state != CLOSING)
     { // No retransmit timer if no data to retransmit
-      NS_LOG_LOGIC (this << " Cancelled ReTxTimeout event which was set to expire at " <<
-                    (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
+      NS_LOG_LOGIC (
+          this << " Cancelled ReTxTimeout event which was set to expire at "
+               << (Simulator::Now () + Simulator::GetDelayLeft (m_retxEvent)).GetSeconds ());
       m_retxEvent.Cancel ();
     }
 }
@@ -3633,14 +3379,13 @@ TcpSocketBase::ReTxTimeout ()
 
   if (m_state == SYN_SENT)
     {
-      NS_ASSERT (m_synCount > 0);
-      if (m_tcb->m_useEcn == TcpSocketState::On)
+      if (m_synCount > 0)
         {
-          SendEmptyPacket (TcpHeader::SYN | TcpHeader::ECE | TcpHeader::CWR);
+          SendEmptyPacket (TcpHeader::SYN);
         }
       else
         {
-          SendEmptyPacket (TcpHeader::SYN);
+          NotifyConnectionFailed ();
         }
       return;
     }
@@ -3657,15 +3402,17 @@ TcpSocketBase::ReTxTimeout ()
 
   NS_LOG_DEBUG ("Checking if Connection is Established");
   // If all data are received (non-closing socket and nothing to send), just return
-  if (m_state <= ESTABLISHED && m_txBuffer->HeadSequence () >= m_tcb->m_highTxMark && m_txBuffer->Size () == 0)
+  if (m_state <= ESTABLISHED && m_txBuffer->HeadSequence () >= m_tcb->m_highTxMark &&
+      m_txBuffer->Size () == 0)
     {
-      NS_LOG_DEBUG ("Already Sent full data" << m_txBuffer->HeadSequence () << " " << m_tcb->m_highTxMark);
+      NS_LOG_UNCOND ("Already Sent full data" << m_txBuffer->HeadSequence () << " "
+                                              << m_tcb->m_highTxMark);
       return;
     }
 
   if (m_dataRetrCount == 0)
     {
-      NS_LOG_INFO ("No more data retries available. Dropping connection");
+      NS_LOG_UNCOND ("No more data retries available. Dropping connection");
       NotifyErrorClose ();
       DeallocateEndPoint ();
       return;
@@ -3677,7 +3424,7 @@ TcpSocketBase::ReTxTimeout ()
 
   uint32_t inFlightBeforeRto = BytesInFlight ();
   bool resetSack = !m_sackEnabled; // Reset SACK information if SACK is not enabled.
-                                   // The information in the TcpTxBuffer is guessed, in this case.
+      // The information in the TcpTxBuffer is guessed, in this case.
 
   // Reset dupAckCount
   m_dupAckCount = 0;
@@ -3706,11 +3453,10 @@ TcpSocketBase::ReTxTimeout ()
   // RecoveryPoint MUST be preserved and the loss recovery algorithm
   // outlined in this document MUST be terminated.
   m_recover = m_tcb->m_highTxMark;
-  m_recoverActive = true;
 
   // RFC 6298, clause 2.5, double the timer
   Time doubledRto = m_rto + m_rto;
-  m_rto = Min (doubledRto, Time::FromDouble (60,  Time::S));
+  m_rto = Min (doubledRto, Time::FromDouble (60, Time::S));
 
   // Empty RTT history
   m_history.clear ();
@@ -3729,24 +3475,19 @@ TcpSocketBase::ReTxTimeout ()
   m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_LOSS);
   m_congestionControl->CongestionStateSet (m_tcb, TcpSocketState::CA_LOSS);
   m_tcb->m_congState = TcpSocketState::CA_LOSS;
-  m_tcb->m_cWnd = m_tcb->m_segmentSize;
-  m_tcb->m_cWndInfl = m_tcb->m_cWnd;
 
+  m_tcb->m_cWnd = m_tcb->m_segmentSize;
+  m_cWndInfl = m_tcb->m_cWnd;
   m_pacingTimer.Cancel ();
 
-  NS_LOG_DEBUG ("RTO. Reset cwnd to " <<  m_tcb->m_cWnd << ", ssthresh to " <<
-                m_tcb->m_ssThresh << ", restart from seqnum " <<
-                m_txBuffer->HeadSequence () << " doubled rto to " <<
-                m_rto.Get ().GetSeconds () << " s");
-
-  NS_ASSERT_MSG (BytesInFlight () == 0, "There are some bytes in flight after an RTO: " <<
-                 BytesInFlight ());
+  NS_ASSERT_MSG (BytesInFlight () == 0,
+                 "There are some bytes in flight after an RTO: " << BytesInFlight ());
 
   SendPendingData (m_connected);
 
   NS_ASSERT_MSG (BytesInFlight () <= m_tcb->m_segmentSize,
-                 "In flight (" << BytesInFlight () <<
-                 ") there is more than one segment (" << m_tcb->m_segmentSize << ")");
+                 "In flight (" << BytesInFlight () << ") there is more than one segment ("
+                               << m_tcb->m_segmentSize << ")");
 }
 
 void
@@ -3754,15 +3495,7 @@ TcpSocketBase::DelAckTimeout (void)
 {
   m_delAckCount = 0;
   m_congestionControl->CwndEvent (m_tcb, TcpSocketState::CA_EVENT_DELAYED_ACK);
-  if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-    {
-      SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-      m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-    }
-  else
-    {
-      SendEmptyPacket (TcpHeader::ACK);
-    }
+  SendEmptyPacket (TcpHeader::ACK);
 }
 
 void
@@ -3773,18 +3506,11 @@ TcpSocketBase::LastAckTimeout (void)
   m_lastAckEvent.Cancel ();
   if (m_state == LAST_ACK)
     {
-      if (m_dataRetrCount == 0)
-        {
-          NS_LOG_INFO ("LAST-ACK: No more data retries available. Dropping connection");
-          NotifyErrorClose ();
-          DeallocateEndPoint ();
-          return;
-        }
-      m_dataRetrCount--;
-      SendEmptyPacket (TcpHeader::FIN | TcpHeader::ACK);
-      NS_LOG_LOGIC ("TcpSocketBase " << this << " rescheduling LATO1");
-      Time lastRto = m_rtt->GetEstimate () + Max (m_clockGranularity, m_rtt->GetVariation () * 4);
-      m_lastAckEvent = Simulator::Schedule (lastRto, &TcpSocketBase::LastAckTimeout, this);
+      CloseAndNotify ();
+    }
+  if (!m_closeNotified)
+    {
+      m_closeNotified = true;
     }
 }
 
@@ -3795,12 +3521,13 @@ void
 TcpSocketBase::PersistTimeout ()
 {
   NS_LOG_LOGIC ("PersistTimeout expired at " << Simulator::Now ().GetSeconds ());
-  m_persistTimeout = std::min (Seconds (60), Time (2 * m_persistTimeout)); // max persist timeout = 60s
-  Ptr<Packet> p = m_txBuffer->CopyFromSequence (1, m_tcb->m_nextTxSequence)->GetPacketCopy ();
+  m_persistTimeout =
+      std::min (Seconds (60), Time (2 * m_persistTimeout)); // max persist timeout = 60s
+  Ptr<Packet> p = m_txBuffer->CopyFromSequence (1, m_tcb->m_nextTxSequence);
   m_txBuffer->ResetLastSegmentSent ();
   TcpHeader tcpHeader;
   tcpHeader.SetSequenceNumber (m_tcb->m_nextTxSequence);
-  tcpHeader.SetAckNumber (m_tcb->m_rxBuffer->NextRxSequence ());
+  tcpHeader.SetAckNumber (m_rxBuffer->NextRxSequence ());
   tcpHeader.SetWindowSize (AdvertisedWindowSize ());
   if (m_endPoint != nullptr)
     {
@@ -3813,17 +3540,7 @@ TcpSocketBase::PersistTimeout ()
       tcpHeader.SetDestinationPort (m_endPoint6->GetPeerPort ());
     }
   AddOptions (tcpHeader);
-  //Send a packet tag for setting ECT bits in IP header
-  if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED)
-    {
-      SocketIpTosTag ipTosTag;
-      ipTosTag.SetTos (MarkEcnCodePoint (0, m_tcb->m_ectCodePoint));
-      p->AddPacketTag (ipTosTag);
 
-      SocketIpv6TclassTag ipTclassTag;
-      ipTclassTag.SetTclass (MarkEcnCodePoint (0, m_tcb->m_ectCodePoint));
-      p->AddPacketTag (ipTclassTag);
-    }
   m_txTrace (p, tcpHeader, this);
 
   if (m_endPoint != nullptr)
@@ -3849,31 +3566,23 @@ TcpSocketBase::DoRetransmit ()
   NS_LOG_FUNCTION (this);
   bool res;
   SequenceNumber32 seq;
-  SequenceNumber32 seqHigh;
-  uint32_t maxSizeToSend;
 
   // Find the first segment marked as lost and not retransmitted. With Reno,
   // that should be the head
-  res = m_txBuffer->NextSeg (&seq, &seqHigh, false);
+  res = m_txBuffer->NextSeg (&seq, false);
   if (!res)
     {
       // We have already retransmitted the head. However, we still received
       // three dupacks, or the RTO expired, but no data to transmit.
       // Therefore, re-send again the head.
       seq = m_txBuffer->HeadSequence ();
-      maxSizeToSend = m_tcb->m_segmentSize;
-    }
-  else
-    {
-      // NextSeg() may constrain the segment size when res is true
-      maxSizeToSend = static_cast<uint32_t> (seqHigh - seq);
     }
   NS_ASSERT (m_sackEnabled || seq == m_txBuffer->HeadSequence ());
 
   NS_LOG_INFO ("Retransmitting " << seq);
   // Update the trace and retransmit the segment
   m_tcb->m_nextTxSequence = seq;
-  uint32_t sz = SendDataPacket (m_tcb->m_nextTxSequence, maxSizeToSend, true);
+  uint32_t sz = SendDataPacket (m_tcb->m_nextTxSequence, m_tcb->m_segmentSize, true);
 
   NS_ASSERT (sz > 0);
 }
@@ -3907,8 +3616,7 @@ TcpSocketBase::TimeWait ()
     }
   // Move from TIME_WAIT to CLOSED after 2*MSL. Max segment lifetime is 2 min
   // according to RFC793, p.28
-  m_timewaitEvent = Simulator::Schedule (Seconds (2 * m_msl),
-                                         &TcpSocketBase::CloseAndNotify, this);
+  m_timewaitEvent = Simulator::Schedule (Seconds (2 * m_msl), &TcpSocketBase::CloseAndNotify, this);
 }
 
 /* Below are the attribute get/set functions */
@@ -3932,30 +3640,21 @@ TcpSocketBase::SetRcvBufSize (uint32_t size)
   NS_LOG_FUNCTION (this << size);
   uint32_t oldSize = GetRcvBufSize ();
 
-  m_tcb->m_rxBuffer->SetMaxBufferSize (size);
+  m_rxBuffer->SetMaxBufferSize (size);
 
   /* The size has (manually) increased. Actively inform the other end to prevent
    * stale zero-window states.
    */
   if (oldSize < size && m_connected)
     {
-      if (m_tcb->m_ecnState == TcpSocketState::ECN_CE_RCVD || m_tcb->m_ecnState == TcpSocketState::ECN_SENDING_ECE)
-        {
-          SendEmptyPacket (TcpHeader::ACK | TcpHeader::ECE);
-          NS_LOG_DEBUG (TcpSocketState::EcnStateName[m_tcb->m_ecnState] << " -> ECN_SENDING_ECE");
-          m_tcb->m_ecnState = TcpSocketState::ECN_SENDING_ECE;
-        }
-      else
-        {
-          SendEmptyPacket (TcpHeader::ACK);
-        }
+      SendEmptyPacket (TcpHeader::ACK);
     }
 }
 
 uint32_t
 TcpSocketBase::GetRcvBufSize (void) const
 {
-  return m_tcb->m_rxBuffer->MaxBufferSize ();
+  return m_rxBuffer->MaxBufferSize ();
 }
 
 void
@@ -4080,7 +3779,7 @@ TcpSocketBase::GetAllowBroadcast (void) const
 }
 
 void
-TcpSocketBase::AddOptions (TcpHeader& header)
+TcpSocketBase::AddOptions (TcpHeader &header)
 {
   NS_LOG_FUNCTION (this << header);
 
@@ -4107,15 +3806,15 @@ TcpSocketBase::ProcessOptionWScale (const Ptr<const TcpOption> option)
       m_sndWindShift = 14;
     }
 
-  NS_LOG_INFO (m_node->GetId () << " Received a scale factor of " <<
-               static_cast<int> (m_sndWindShift));
+  NS_LOG_INFO (m_node->GetId () << " Received a scale factor of "
+                                << static_cast<int> (m_sndWindShift));
 }
 
 uint8_t
 TcpSocketBase::CalculateWScale () const
 {
   NS_LOG_FUNCTION (this);
-  uint32_t maxSpace = m_tcb->m_rxBuffer->MaxBufferSize ();
+  uint32_t maxSpace = m_rxBuffer->MaxBufferSize ();
   uint8_t scale = 0;
 
   while (maxSpace > m_maxWinSize)
@@ -4130,8 +3829,9 @@ TcpSocketBase::CalculateWScale () const
       scale = 14;
     }
 
-  NS_LOG_INFO ("Node " << m_node->GetId () << " calculated wscale factor of " <<
-               static_cast<int> (scale) << " for buffer size " << m_tcb->m_rxBuffer->MaxBufferSize ());
+  NS_LOG_INFO ("Node " << m_node->GetId () << " calculated wscale factor of "
+                       << static_cast<int> (scale) << " for buffer size "
+                       << m_rxBuffer->MaxBufferSize ());
   return scale;
 }
 
@@ -4151,17 +3851,18 @@ TcpSocketBase::AddOptionWScale (TcpHeader &header)
 
   header.AppendOption (option);
 
-  NS_LOG_INFO (m_node->GetId () << " Send a scaling factor of " <<
-               static_cast<int> (m_rcvWindShift));
+  NS_LOG_INFO (m_node->GetId () << " Send a scaling factor of "
+                                << static_cast<int> (m_rcvWindShift));
 }
 
-uint32_t
+bool
 TcpSocketBase::ProcessOptionSack (const Ptr<const TcpOption> option)
 {
   NS_LOG_FUNCTION (this << option);
 
   Ptr<const TcpOptionSack> s = DynamicCast<const TcpOptionSack> (option);
-  return m_txBuffer->Update (s->GetSackList (), MakeCallback (&TcpRateOps::SkbDelivered, m_rateOps));
+  TcpOptionSack::SackList list = s->GetSackList ();
+  return m_txBuffer->Update (list);
 }
 
 void
@@ -4187,7 +3888,7 @@ TcpSocketBase::AddOptionSackPermitted (TcpHeader &header)
 }
 
 void
-TcpSocketBase::AddOptionSack (TcpHeader& header)
+TcpSocketBase::AddOptionSack (TcpHeader &header)
 {
   NS_LOG_FUNCTION (this << header);
 
@@ -4195,7 +3896,7 @@ TcpSocketBase::AddOptionSack (TcpHeader& header)
   uint8_t optionLenAvail = header.GetMaxOptionLength () - header.GetOptionLength ();
   uint8_t allowedSackBlocks = (optionLenAvail - 2) / 8;
 
-  TcpOptionSack::SackList sackList = m_tcb->m_rxBuffer->GetSackList ();
+  TcpOptionSack::SackList sackList = m_rxBuffer->GetSackList ();
   if (allowedSackBlocks == 0 || sackList.empty ())
     {
       NS_LOG_LOGIC ("No space available or sack list empty, not adding sack blocks");
@@ -4223,7 +3924,7 @@ TcpSocketBase::ProcessOptionTimestamp (const Ptr<const TcpOption> option,
 
   Ptr<const TcpOptionTS> ts = DynamicCast<const TcpOptionTS> (option);
 
-  // This is valid only when no overflow occurs. It happens
+  // This is valid only when no overflow occours. It happens
   // when a connection last longer than 50 days.
   if (m_tcb->m_rcvTimestampValue > ts->GetTimestamp ())
     {
@@ -4234,17 +3935,17 @@ TcpSocketBase::ProcessOptionTimestamp (const Ptr<const TcpOption> option,
   m_tcb->m_rcvTimestampValue = ts->GetTimestamp ();
   m_tcb->m_rcvTimestampEchoReply = ts->GetEcho ();
 
-  if (seq == m_tcb->m_rxBuffer->NextRxSequence () && seq <= m_highTxAck)
+  if (seq == m_rxBuffer->NextRxSequence () && seq <= m_highTxAck)
     {
       m_timestampToEcho = ts->GetTimestamp ();
     }
 
-  NS_LOG_INFO (m_node->GetId () << " Got timestamp=" <<
-               m_timestampToEcho << " and Echo="     << ts->GetEcho ());
+  NS_LOG_INFO (m_node->GetId () << " Got timestamp=" << m_timestampToEcho
+                                << " and Echo=" << ts->GetEcho ());
 }
 
 void
-TcpSocketBase::AddOptionTimestamp (TcpHeader& header)
+TcpSocketBase::AddOptionTimestamp (TcpHeader &header)
 {
   NS_LOG_FUNCTION (this << header);
 
@@ -4254,11 +3955,12 @@ TcpSocketBase::AddOptionTimestamp (TcpHeader& header)
   option->SetEcho (m_timestampToEcho);
 
   header.AppendOption (option);
-  NS_LOG_INFO (m_node->GetId () << " Add option TS, ts=" <<
-               option->GetTimestamp () << " echo=" << m_timestampToEcho);
+  NS_LOG_INFO (m_node->GetId () << " Add option TS, ts=" << option->GetTimestamp ()
+                                << " echo=" << m_timestampToEcho);
 }
 
-void TcpSocketBase::UpdateWindowSize (const TcpHeader &header)
+void
+TcpSocketBase::UpdateWindowSize (const TcpHeader &header)
 {
   NS_LOG_FUNCTION (this << header);
   //  If the connection is not established, the window size is always
@@ -4337,7 +4039,7 @@ TcpSocketBase::GetTxBuffer (void) const
 Ptr<TcpRxBuffer>
 TcpSocketBase::GetRxBuffer (void) const
 {
-  return m_tcb->m_rxBuffer;
+  return m_rxBuffer;
 }
 
 void
@@ -4348,21 +4050,9 @@ TcpSocketBase::SetRetxThresh (uint32_t retxThresh)
 }
 
 void
-TcpSocketBase::UpdatePacingRateTrace (DataRate oldValue, DataRate newValue)
-{
-  m_pacingRateTrace (oldValue, newValue);
-}
-
-void
 TcpSocketBase::UpdateCwnd (uint32_t oldValue, uint32_t newValue)
 {
   m_cWndTrace (oldValue, newValue);
-}
-
-void
-TcpSocketBase::UpdateCwndInfl (uint32_t oldValue, uint32_t newValue)
-{
-  m_cWndInflTrace (oldValue, newValue);
 }
 
 void
@@ -4378,16 +4068,8 @@ TcpSocketBase::UpdateCongState (TcpSocketState::TcpCongState_t oldValue,
   m_congStateTrace (oldValue, newValue);
 }
 
- void
-TcpSocketBase::UpdateEcnState (TcpSocketState::EcnState_t oldValue,
-                                TcpSocketState::EcnState_t newValue)
-{
-  m_ecnStateTrace (oldValue, newValue);
-}
-
 void
-TcpSocketBase::UpdateNextTxSequence (SequenceNumber32 oldValue,
-                                     SequenceNumber32 newValue)
+TcpSocketBase::UpdateNextTxSequence (SequenceNumber32 oldValue, SequenceNumber32 newValue)
 
 {
   m_nextTxSequenceTrace (oldValue, newValue);
@@ -4416,14 +4098,9 @@ TcpSocketBase::SetCongestionControlAlgorithm (Ptr<TcpCongestionOps> algo)
 {
   NS_LOG_FUNCTION (this << algo);
   m_congestionControl = algo;
-  m_congestionControl->Init (m_tcb);
-}
 
-void
-TcpSocketBase::SetRecoveryAlgorithm (Ptr<TcpRecoveryOps> recovery)
-{
-  NS_LOG_FUNCTION (this << recovery);
-  m_recoveryOps = recovery;
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation
+  m_congestionControl->SetNode (m_node);
 }
 
 Ptr<TcpSocketBase>
@@ -4437,7 +4114,7 @@ TcpSocketBase::SafeSubtraction (uint32_t a, uint32_t b)
 {
   if (a > b)
     {
-      return a-b;
+      return a - b;
     }
 
   return 0;
@@ -4446,128 +4123,19 @@ TcpSocketBase::SafeSubtraction (uint32_t a, uint32_t b)
 void
 TcpSocketBase::NotifyPacingPerformed (void)
 {
-  NS_LOG_FUNCTION (this);
+  NS_LOG_FUNCTION_NOARGS ();
   NS_LOG_INFO ("Performing Pacing");
   SendPendingData (m_connected);
 }
 
-bool
-TcpSocketBase::IsPacingEnabled (void) const
-{
-  if (!m_tcb->m_pacing)
-    {
-      return false;
-    }
-  else
-    {
-      if (m_tcb->m_paceInitialWindow)
-        {
-          return true;
-        }
-      SequenceNumber32 highTxMark = m_tcb->m_highTxMark; // cast traced value
-      if (highTxMark.GetValue () > (GetInitialCwnd () * m_tcb->m_segmentSize))
-        {
-          return true;
-        }
-    }
-  return false;
-}
-
-void
-TcpSocketBase::UpdatePacingRate (void)
-{
-  NS_LOG_FUNCTION (this << m_tcb);
-
-  // According to Linux, set base pacing rate to (cwnd * mss) / srtt
-  //
-  // In (early) slow start, multiply base by the slow start factor.
-  // In late slow start and congestion avoidance, multiply base by
-  // the congestion avoidance factor.
-  // Comment from Linux code regarding early/late slow start:
-  // Normal Slow Start condition is (tp->snd_cwnd < tp->snd_ssthresh)
-  // If snd_cwnd >= (tp->snd_ssthresh / 2), we are approaching
-  // end of slow start and should slow down.
-
-  // Similar to Linux, do not update pacing rate here if the
-  // congestion control implements TcpCongestionOps::CongControl ()
-  if (m_congestionControl->HasCongControl () || !m_tcb->m_pacing) return;
-
-  double factor;
-  if (m_tcb->m_cWnd < m_tcb->m_ssThresh/2)
-    {
-      NS_LOG_DEBUG ("Pacing according to slow start factor; " << m_tcb->m_cWnd << " " << m_tcb->m_ssThresh);
-      factor = static_cast<double> (m_tcb->m_pacingSsRatio)/100;
-    }
-  else
-    {
-      NS_LOG_DEBUG ("Pacing according to congestion avoidance factor; " << m_tcb->m_cWnd << " " << m_tcb->m_ssThresh);
-      factor = static_cast<double> (m_tcb->m_pacingCaRatio)/100;
-    }
-  Time lastRtt = m_tcb->m_lastRtt.Get (); // Get underlying Time value
-  NS_LOG_DEBUG ("Last RTT is " << lastRtt.GetSeconds ());
-  
-  // Multiply by 8 to convert from bytes per second to bits per second
-  DataRate pacingRate ((std::max (m_tcb->m_cWnd, m_tcb->m_bytesInFlight) * 8 * factor) / lastRtt.GetSeconds ());
-  if (pacingRate < m_tcb->m_maxPacingRate)
-    {
-      NS_LOG_DEBUG ("Pacing rate updated to: " << pacingRate);
-      m_tcb->m_pacingRate = pacingRate;
-    }
-  else
-    {
-      NS_LOG_DEBUG ("Pacing capped by max pacing rate: " << m_tcb->m_maxPacingRate);
-      m_tcb->m_pacingRate = m_tcb->m_maxPacingRate;
-    }
-}
-
-void
-TcpSocketBase::SetPacingStatus (bool pacing)
-{
-  NS_LOG_FUNCTION (this << pacing);
-  m_tcb->m_pacing = pacing;
-}
-
-void
-TcpSocketBase::SetPaceInitialWindow (bool paceWindow)
-{
-  NS_LOG_FUNCTION (this << paceWindow);
-  m_tcb->m_paceInitialWindow = paceWindow;
-}
-
-void
-TcpSocketBase::SetUseEcn (TcpSocketState::UseEcn_t useEcn)
-{
-  NS_LOG_FUNCTION (this << useEcn);
-  m_tcb->m_useEcn = useEcn;
-}
-
-uint32_t
-TcpSocketBase::GetRWnd (void) const
-{
-  return m_rWnd.Get ();
-}
-
-SequenceNumber32
-TcpSocketBase::GetHighRxAck (void) const
-{
-  return m_highRxAckMark.Get ();
-}
-
-
 //RttHistory methods
 RttHistory::RttHistory (SequenceNumber32 s, uint32_t c, Time t)
-  : seq (s),
-    count (c),
-    time (t),
-    retx (false)
+    : seq (s), count (c), time (t), retx (false)
 {
 }
 
-RttHistory::RttHistory (const RttHistory& h)
-  : seq (h.seq),
-    count (h.count),
-    time (h.time),
-    retx (h.retx)
+RttHistory::RttHistory (const RttHistory &h)
+    : seq (h.seq), count (h.count), time (h.time), retx (h.retx)
 {
 }
 

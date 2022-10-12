@@ -17,7 +17,10 @@
  *
  */
 #include "tcp-congestion-ops.h"
+#include "tcp-socket-base.h"
 #include "ns3/log.h"
+
+#include <fstream>
 
 namespace ns3 {
 
@@ -28,10 +31,8 @@ NS_OBJECT_ENSURE_REGISTERED (TcpCongestionOps);
 TypeId
 TcpCongestionOps::GetTypeId (void)
 {
-  static TypeId tid = TypeId ("ns3::TcpCongestionOps")
-    .SetParent<Object> ()
-    .SetGroupName ("Internet")
-  ;
+  static TypeId tid =
+      TypeId ("ns3::TcpCongestionOps").SetParent<Object> ().SetGroupName ("Internet");
   return tid;
 }
 
@@ -47,46 +48,18 @@ TcpCongestionOps::~TcpCongestionOps ()
 {
 }
 
+//**************************************************Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts**************************************
 void
-TcpCongestionOps::IncreaseWindow (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
+TcpCongestionOps::SetNode (Ptr<Node> node)
 {
-  NS_LOG_FUNCTION (this << tcb << segmentsAcked);
+  m_node = node;
 }
-
-void
-TcpCongestionOps::PktsAcked (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked,
-                             const Time& rtt)
+Ptr<Node>
+TcpCongestionOps::GetNode (void)
 {
-  NS_LOG_FUNCTION (this << tcb << segmentsAcked << rtt);
+  return m_node;
 }
-
-void
-TcpCongestionOps::CongestionStateSet (Ptr<TcpSocketState> tcb,
-                                      const TcpSocketState::TcpCongState_t newState)
-{
-  NS_LOG_FUNCTION (this << tcb << newState);
-}
-
-void
-TcpCongestionOps::CwndEvent (Ptr<TcpSocketState> tcb,
-                             const TcpSocketState::TcpCAEvent_t event)
-{
-  NS_LOG_FUNCTION (this << tcb << event);
-}
-
-bool
-TcpCongestionOps::HasCongControl () const
-{
-  return false;
-}
-
-void
-TcpCongestionOps::CongControl (Ptr<TcpSocketState> tcb,
-                               [[maybe_unused]] const TcpRateOps::TcpRateConnection &rc,
-                               [[maybe_unused]] const TcpRateOps::TcpRateSample &rs)
-{
-  NS_LOG_FUNCTION (this << tcb);
-}
+//**************************************************Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends**************************************
 
 // RENO
 
@@ -96,10 +69,9 @@ TypeId
 TcpNewReno::GetTypeId (void)
 {
   static TypeId tid = TypeId ("ns3::TcpNewReno")
-    .SetParent<TcpCongestionOps> ()
-    .SetGroupName ("Internet")
-    .AddConstructor<TcpNewReno> ()
-  ;
+                          .SetParent<TcpCongestionOps> ()
+                          .SetGroupName ("Internet")
+                          .AddConstructor<TcpNewReno> ();
   return tid;
 }
 
@@ -108,8 +80,7 @@ TcpNewReno::TcpNewReno (void) : TcpCongestionOps ()
   NS_LOG_FUNCTION (this);
 }
 
-TcpNewReno::TcpNewReno (const TcpNewReno& sock)
-  : TcpCongestionOps (sock)
+TcpNewReno::TcpNewReno (const TcpNewReno &sock) : TcpCongestionOps (sock)
 {
   NS_LOG_FUNCTION (this);
 }
@@ -117,6 +88,45 @@ TcpNewReno::TcpNewReno (const TcpNewReno& sock)
 TcpNewReno::~TcpNewReno (void)
 {
 }
+
+//**************************************************Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts**************************************
+void
+TcpNewReno::PrintToFile (Ptr<const TcpSocketState> tcb)
+{
+  Ptr<Node> node = this->GetNode ();
+
+  if (!startPrintToFile)
+    {
+      startPrintToFile = true;
+      std::ofstream traceAll ("TcpNewReno_trace_for_node_" + std::to_string (node->GetId ()) +
+                                  ".data",
+                              std::ofstream::out | std::ofstream::trunc);
+    }
+
+  std::ofstream traceAll ("TcpNewReno_trace_for_node_" + std::to_string (node->GetId ()) + ".data",
+                          std::ofstream::out | std::ofstream::app);
+  // Always check to see if the file is open and for errors.
+  if (traceAll.is_open ())
+    {
+      // If it is open we can do our writing to the file.
+      // Here is a example of this.
+      traceAll << Simulator::Now ().GetSeconds () << "\t";
+
+      traceAll << tcb->m_cWnd.Get () << "\t"; //actual congestion window in bytes
+
+      traceAll << tcb->GetCwndInSegments () << "\t"; //actual congestion window in segments
+
+      traceAll << tcb->m_lastRtt.Get ().GetMilliSeconds () << "\t"; //last rtt
+
+      traceAll << tcb->m_minRtt.GetMilliSeconds () << "\n"; //min rtt
+    }
+  else
+    {
+      // If the file isn't open something went wrong. Point that out.
+      std::cout << "Something went wrong with opening the file!";
+    }
+}
+//**************************************************Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends**************************************
 
 /**
  * \brief Tcp NewReno slow start algorithm
@@ -168,9 +178,14 @@ TcpNewReno::SlowStart (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
   if (segmentsAcked >= 1)
     {
       tcb->m_cWnd += tcb->m_segmentSize;
-      NS_LOG_INFO ("In SlowStart, updated to cwnd " << tcb->m_cWnd << " ssthresh " << tcb->m_ssThresh);
+      NS_LOG_INFO ("In SlowStart, updated to cwnd " << tcb->m_cWnd << " ssthresh "
+                                                    << tcb->m_ssThresh);
       return segmentsAcked - 1;
     }
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+  PrintToFile (tcb);
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
 
   return 0;
 }
@@ -191,12 +206,17 @@ TcpNewReno::CongestionAvoidance (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked
 
   if (segmentsAcked > 0)
     {
-      double adder = static_cast<double> (tcb->m_segmentSize * tcb->m_segmentSize) / tcb->m_cWnd.Get ();
+      double adder =
+          static_cast<double> (tcb->m_segmentSize * tcb->m_segmentSize) / tcb->m_cWnd.Get ();
       adder = std::max (1.0, adder);
       tcb->m_cWnd += static_cast<uint32_t> (adder);
-      NS_LOG_INFO ("In CongAvoid, updated to cwnd " << tcb->m_cWnd <<
-                   " ssthresh " << tcb->m_ssThresh);
+      NS_LOG_INFO ("In CongAvoid, updated to cwnd " << tcb->m_cWnd << " ssthresh "
+                                                    << tcb->m_ssThresh);
     }
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+  PrintToFile (tcb);
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
 }
 
 /**
@@ -228,9 +248,13 @@ TcpNewReno::IncreaseWindow (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
    * slow start we receive a cumulative ACK, it counts only for 1 SMSS of
    * increase, wasting the others.
    *
-   * // Incorrect assert, I am sorry
+   * // Uncorrect assert, I am sorry
    * NS_ASSERT (segmentsAcked == 0);
    */
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation starts
+  PrintToFile (tcb);
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
 }
 
 std::string
@@ -240,8 +264,7 @@ TcpNewReno::GetName () const
 }
 
 uint32_t
-TcpNewReno::GetSsThresh (Ptr<const TcpSocketState> state,
-                         uint32_t bytesInFlight)
+TcpNewReno::GetSsThresh (Ptr<const TcpSocketState> state, uint32_t bytesInFlight)
 {
   NS_LOG_FUNCTION (this << state << bytesInFlight);
 
@@ -255,4 +278,3 @@ TcpNewReno::Fork ()
 }
 
 } // namespace ns3
-
