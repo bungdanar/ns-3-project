@@ -275,6 +275,11 @@ main (int argc, char *argv[])
       currXbot += 5;
     }
 
+  // Test pcap on server side
+  ppS0R0.EnablePcapAll ("server");
+  wifiPhysical.SetPcapDataLinkType (WifiPhyHelper::DLT_IEEE802_11_RADIO);
+  wifiPhysical.EnablePcap ("wifiRouter", wifiApDevices.Get (0));
+
   // Run the Simulation
   Simulator::Stop (Seconds (maxSimulationTime));
   Simulator::Run ();
