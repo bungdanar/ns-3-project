@@ -32,6 +32,7 @@ main (int argc, char *argv[])
   int udpSinkPort = 9001;
   int maxBulkBytes = 100'000;
   int maxSimulationTime = 10;
+  string ddosRate = "20480kb/s";
 
   // Routers
   NodeContainer routerNodes;
@@ -213,6 +214,21 @@ main (int argc, char *argv[])
   ApplicationContainer tcpSinkApp = tcpSink.Install (serverNode.Get (0));
   tcpSinkApp.Start (Seconds (0.0));
   tcpSinkApp.Stop (Seconds (maxSimulationTime));
+
+  // DDoS UDP Flood aplication behaviour
+  OnOffHelper onoff ("ns3::UdpSocketFactory",
+                     Address (InetSocketAddress (serverInterfaces.GetAddress (0), udpSinkPort)));
+  onoff.SetConstantRate (DataRate (ddosRate));
+  onoff.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=30]"));
+  onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
+
+  ApplicationContainer onOffUdpBotApps[nBot];
+  for (int k = 0; k < nBot; ++k)
+    {
+      onOffUdpBotApps[k] = onoff.Install (botNodes.Get (k));
+      onOffUdpBotApps[k].Start (Seconds (0.0));
+      onOffUdpBotApps[k].Stop (Seconds (maxSimulationTime));
+    }
 
   // Build legitimate TCP sender application for wired and wireless
   BulkSendHelper bulkSend ("ns3::TcpSocketFactory",
