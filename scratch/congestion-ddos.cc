@@ -18,11 +18,11 @@ main (int argc, char *argv[])
   auto globalDataRate = StringValue ("100Mbps");
   auto globalDelay = StringValue ("1ms");
 
-  int nRouter = 3;
-  int nServer = 1;
-  int nWiredclient = 4;
-  int nWifiSta = 4;
-  int nBot = 4;
+  uint32_t nRouter = 3;
+  uint32_t nServer = 1;
+  uint32_t nWiredclient = 4;
+  uint32_t nWifiSta = 4;
+  uint32_t nBot = 4;
 
   int idxRouterForServer = 0;
   int idxRouterForWired = 1;
@@ -33,6 +33,16 @@ main (int argc, char *argv[])
   int maxBulkBytes = 100'000;
   int maxSimulationTime = 10;
   string ddosRate = "20480kb/s";
+
+  CommandLine cmd (__FILE__);
+  cmd.AddValue ("n_wired_client", "Jumlah wired node client", nWiredclient);
+  cmd.AddValue ("n_wireless_client", "Jumlah wireless node client", nWifiSta);
+  cmd.AddValue ("n_bot", "Jumlah bot node client", nBot);
+  cmd.Parse (argc, argv);
+  if (nWiredclient < 2)
+    {
+      nWiredclient = 2;
+    }
 
   // Routers
   NodeContainer routerNodes;
