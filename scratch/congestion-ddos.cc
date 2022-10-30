@@ -17,7 +17,6 @@ std::string dir;
 uint32_t prev = 0;
 Time prevTime = Seconds (0);
 
-// Create a new directory to store the output of the program
 // Naming the output directory using local system time
 static void
 handleOutputDirName ()
@@ -57,8 +56,22 @@ TraceThroughput (Ptr<FlowMonitor> monitor)
 int
 main (int argc, char *argv[])
 {
-  auto globalDataRate = StringValue ("10Mbps");
-  auto globalDelay = StringValue ("1ms");
+  auto dataRate_p2pR01 = StringValue ("10Mbps");
+  auto delay_p2pR01 = StringValue ("1ms");
+
+  auto dataRate_p2pR02 = StringValue ("10Mbps");
+  auto delay_p2pR02 = StringValue ("1ms");
+
+  auto dataRate_p2pS0R0 = StringValue ("10Mbps");
+  auto delay_p2pS0R0 = StringValue ("1ms");
+
+  auto dataRate_csma = StringValue ("10Mbps");
+  auto delay_csma = StringValue ("1ms");
+
+  auto dataRate_p2pBot = StringValue ("10Mbps");
+  auto delay_p2pBot = StringValue ("1ms");
+
+  std::string dataRate_ddos = "20480kb/s";
 
   uint32_t nRouter = 3;
   uint32_t nServer = 1;
@@ -74,7 +87,6 @@ main (int argc, char *argv[])
   int udpSinkPort = 9001;
   int maxBulkBytes = 100'000;
   int maxSimulationTime = 10;
-  std::string ddosRate = "20480kb/s";
 
   CommandLine cmd (__FILE__);
   cmd.AddValue ("n_wired_client", "Jumlah wired node client", nWiredclient);
@@ -86,6 +98,7 @@ main (int argc, char *argv[])
       nWiredclient = 2;
     }
 
+  // TCP congestion control configuration
   std::string tcpTypeId = "TcpBbr";
   Config::SetDefault ("ns3::TcpL4Protocol::SocketType", StringValue ("ns3::" + tcpTypeId));
 
@@ -94,11 +107,11 @@ main (int argc, char *argv[])
   routerNodes.Create (nRouter);
 
   PointToPointHelper ppR01, ppR02;
-  ppR01.SetDeviceAttribute ("DataRate", globalDataRate);
-  ppR01.SetChannelAttribute ("Delay", globalDelay);
+  ppR01.SetDeviceAttribute ("DataRate", dataRate_p2pR01);
+  ppR01.SetChannelAttribute ("Delay", delay_p2pR01);
 
-  ppR02.SetDeviceAttribute ("DataRate", globalDataRate);
-  ppR02.SetChannelAttribute ("Delay", globalDelay);
+  ppR02.SetDeviceAttribute ("DataRate", dataRate_p2pR02);
+  ppR02.SetChannelAttribute ("Delay", delay_p2pR02);
 
   NetDeviceContainer dR01, dR02;
   dR01 = ppR01.Install (routerNodes.Get (idxRouterForServer), routerNodes.Get (idxRouterForWired));
@@ -110,8 +123,8 @@ main (int argc, char *argv[])
   serverNode.Create (nServer);
 
   PointToPointHelper ppS0R0;
-  ppS0R0.SetDeviceAttribute ("DataRate", globalDataRate);
-  ppS0R0.SetChannelAttribute ("Delay", globalDelay);
+  ppS0R0.SetDeviceAttribute ("DataRate", dataRate_p2pS0R0);
+  ppS0R0.SetChannelAttribute ("Delay", delay_p2pS0R0);
 
   NetDeviceContainer dS0R0;
   dS0R0 = ppS0R0.Install (serverNode.Get (0), routerNodes.Get (idxRouterForServer));
@@ -122,8 +135,8 @@ main (int argc, char *argv[])
   wiredClientNodes.Create (nWiredclient);
 
   CsmaHelper csma;
-  csma.SetChannelAttribute ("DataRate", globalDataRate);
-  csma.SetChannelAttribute ("Delay", globalDelay);
+  csma.SetChannelAttribute ("DataRate", dataRate_csma);
+  csma.SetChannelAttribute ("Delay", delay_csma);
 
   NetDeviceContainer csmaDevices;
   csmaDevices = csma.Install (wiredClientNodes);
@@ -160,8 +173,8 @@ main (int argc, char *argv[])
   botNodes.Create (nBot);
 
   PointToPointHelper ppBot;
-  ppBot.SetDeviceAttribute ("DataRate", globalDataRate);
-  ppBot.SetChannelAttribute ("Delay", globalDelay);
+  ppBot.SetDeviceAttribute ("DataRate", dataRate_p2pBot);
+  ppBot.SetChannelAttribute ("Delay", delay_p2pBot);
 
   // Install net device to bot nodes
   NetDeviceContainer botDevices[nBot];
@@ -273,7 +286,7 @@ main (int argc, char *argv[])
   // DDoS UDP Flood aplication behaviour
   OnOffHelper onoff ("ns3::UdpSocketFactory",
                      Address (InetSocketAddress (serverInterfaces.GetAddress (0), udpSinkPort)));
-  onoff.SetConstantRate (DataRate (ddosRate));
+  onoff.SetConstantRate (DataRate (dataRate_ddos));
   onoff.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=30]"));
   onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
 
