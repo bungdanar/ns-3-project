@@ -17,6 +17,10 @@ std::string dir;
 uint32_t prev = 0;
 Time prevTime = Seconds (0);
 
+// RTT stuff
+static std::map<uint32_t, bool> firstRtt;
+static std::map<uint32_t, Ptr<OutputStreamWrapper>> rttStream;
+
 // Naming the output directory using local system time
 static void
 handleOutputDirName ()
@@ -34,6 +38,40 @@ handleOutputDirName ()
     {
       exit (1);
     }
+}
+
+// RTT stuff
+static uint32_t
+GetNodeIdFromContext (std::string context)
+{
+  std::size_t const n1 = context.find_first_of ("/", 1);
+  std::size_t const n2 = context.find_first_of ("/", n1 + 1);
+  return std::stoul (context.substr (n1 + 1, n2 - n1 - 1));
+}
+
+// RTT stuff
+static void
+RttTracer (std::string context, Time oldval, Time newval)
+{
+  uint32_t nodeId = GetNodeIdFromContext (context);
+
+  if (firstRtt[nodeId])
+    {
+      *rttStream[nodeId]->GetStream () << "0.0 " << oldval.GetSeconds () << std::endl;
+      firstRtt[nodeId] = false;
+    }
+  *rttStream[nodeId]->GetStream ()
+      << Simulator::Now ().GetSeconds () << " " << newval.GetSeconds () << std::endl;
+}
+
+// RTT stuff
+static void
+TraceRtt (std::string rtt_tr_file_name, uint32_t nodeId)
+{
+  AsciiTraceHelper ascii;
+  rttStream[nodeId] = ascii.CreateFileStream (rtt_tr_file_name.c_str ());
+  Config::Connect ("/NodeList/" + std::to_string (nodeId) + "/$ns3::TcpL4Protocol/SocketList/0/RTT",
+                   MakeCallback (&RttTracer));
 }
 
 // Calculate throughput
@@ -369,6 +407,29 @@ main (int argc, char *argv[])
 
   // Create a new directory to store the output of the program
   handleOutputDirName ();
+
+  // RTT stuff
+  std::string prefix_file_name = "rtt";
+  if (enableDdos)
+    {
+      prefix_file_name = prefix_file_name + "-with-dos";
+    }
+
+  uint16_t num_flows = 1;
+  double start_time = 0.1;
+  for (uint16_t index = 0; index < num_flows; index++)
+    {
+      std::string flowString ("");
+      if (num_flows > 1)
+        {
+          flowString = "-flow" + std::to_string (index);
+        }
+
+      firstRtt[index + 1] = true;
+
+      Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceRtt,
+                           prefix_file_name + ".dat", wiredClientNodes.Get (1)->GetId ());
+    }
 
   // Flow Monitor
   FlowMonitorHelper flowmon;
