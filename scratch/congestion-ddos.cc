@@ -8,14 +8,56 @@
 #include "ns3/internet-module.h"
 #include "ns3/netanim-module.h"
 #include "ns3/applications-module.h"
+#include "ns3/flow-monitor-module.h"
 
-using namespace std;
+// using namespace std;
 using namespace ns3;
+
+std::string dir;
+uint32_t prev = 0;
+Time prevTime = Seconds (0);
+
+// Create a new directory to store the output of the program
+// Naming the output directory using local system time
+static void
+handleOutputDirName ()
+{
+  time_t rawtime;
+  struct tm *timeinfo;
+  char buffer[80];
+  time (&rawtime);
+  timeinfo = localtime (&rawtime);
+  strftime (buffer, sizeof (buffer), "%d-%m-%Y-%I-%M-%S", timeinfo);
+  std::string currentTime (buffer);
+  dir = "congestion-ddos-results/" + currentTime + "/";
+  std::string dirToSave = "mkdir -p " + dir;
+  if (system (dirToSave.c_str ()) == -1)
+    {
+      exit (1);
+    }
+}
+
+// Calculate throughput
+static void
+TraceThroughput (Ptr<FlowMonitor> monitor)
+{
+  FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats ();
+  auto itr = stats.begin ();
+  Time curTime = Now ();
+  std::ofstream thr (dir + "/throughput.dat", std::ios::out | std::ios::app);
+  thr << curTime << " "
+      << 8 * (itr->second.txBytes - prev) /
+             (1000 * 1000 * (curTime.GetSeconds () - prevTime.GetSeconds ()))
+      << std::endl;
+  prevTime = curTime;
+  prev = itr->second.txBytes;
+  Simulator::Schedule (Seconds (0.2), &TraceThroughput, monitor);
+}
 
 int
 main (int argc, char *argv[])
 {
-  auto globalDataRate = StringValue ("100Mbps");
+  auto globalDataRate = StringValue ("10Mbps");
   auto globalDelay = StringValue ("1ms");
 
   uint32_t nRouter = 3;
@@ -32,7 +74,7 @@ main (int argc, char *argv[])
   int udpSinkPort = 9001;
   int maxBulkBytes = 100'000;
   int maxSimulationTime = 10;
-  string ddosRate = "20480kb/s";
+  std::string ddosRate = "20480kb/s";
 
   CommandLine cmd (__FILE__);
   cmd.AddValue ("n_wired_client", "Jumlah wired node client", nWiredclient);
@@ -43,6 +85,9 @@ main (int argc, char *argv[])
     {
       nWiredclient = 2;
     }
+
+  std::string tcpTypeId = "TcpBbr";
+  Config::SetDefault ("ns3::TcpL4Protocol::SocketType", StringValue ("ns3::" + tcpTypeId));
 
   // Routers
   NodeContainer routerNodes;
@@ -204,12 +249,12 @@ main (int argc, char *argv[])
 
   // Just some logging
   // Delete this afterward
-  cout << "n Router: " << routerNodes.GetN () << endl
-       << "n Server: " << serverNode.GetN () << endl
-       << "n Wired: " << wiredClientNodes.GetN () << endl
-       << "n Wireless Ap: " << wifiApNode.GetN () << endl
-       << "n Wireless Sta: " << wifiStaNodes.GetN () << endl
-       << "n Bot: " << botNodes.GetN () << endl;
+  // std::cout << "n Router: " << routerNodes.GetN () << std::endl
+  //           << "n Server: " << serverNode.GetN () << std::endl
+  //           << "n Wired: " << wiredClientNodes.GetN () << std::endl
+  //           << "n Wireless Ap: " << wifiApNode.GetN () << std::endl
+  //           << "n Wireless Sta: " << wifiStaNodes.GetN () << std::endl
+  //           << "n Bot: " << botNodes.GetN () << std::endl;
 
   // UDP sink on server side
   PacketSinkHelper udpSink ("ns3::UdpSocketFactory",
@@ -300,6 +345,14 @@ main (int argc, char *argv[])
       AnimationInterface::SetConstantPosition (botNodes.Get (i), currXbot, yBot);
       currXbot += 5;
     }
+
+  // Create a new directory to store the output of the program
+  handleOutputDirName ();
+
+  // Flow Monitor
+  FlowMonitorHelper flowmon;
+  Ptr<FlowMonitor> monitor = flowmon.Install (wiredClientNodes.Get (1));
+  Simulator::Schedule (Seconds (0 + 0.000001), &TraceThroughput, monitor);
 
   // Test pcap on server side
   ppS0R0.EnablePcapAll ("server");
