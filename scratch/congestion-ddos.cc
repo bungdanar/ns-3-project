@@ -78,6 +78,7 @@ main (int argc, char *argv[])
   uint32_t nWiredclient = 4;
   uint32_t nWifiSta = 4;
   uint32_t nBot = 4;
+  bool enableDdos = true;
 
   int idxRouterForServer = 0;
   int idxRouterForWired = 1;
@@ -85,13 +86,16 @@ main (int argc, char *argv[])
 
   int tcpSinkPort = 9000;
   int udpSinkPort = 9001;
-  int maxBulkBytes = 100'000;
+  // int maxBulkBytes = 100'000;
   int maxSimulationTime = 10;
+
+  double throughputTraceTime = 0 + 0.001;
 
   CommandLine cmd (__FILE__);
   cmd.AddValue ("n_wired_client", "Jumlah wired node client", nWiredclient);
   cmd.AddValue ("n_wireless_client", "Jumlah wireless node client", nWifiSta);
   cmd.AddValue ("n_bot", "Jumlah bot node client", nBot);
+  cmd.AddValue ("enable_ddos", "Enable or disable DDoS attack", enableDdos);
   cmd.Parse (argc, argv);
   if (nWiredclient < 2)
     {
@@ -284,24 +288,28 @@ main (int argc, char *argv[])
   tcpSinkApp.Stop (Seconds (maxSimulationTime));
 
   // DDoS UDP Flood aplication behaviour
-  OnOffHelper onoff ("ns3::UdpSocketFactory",
-                     Address (InetSocketAddress (serverInterfaces.GetAddress (0), udpSinkPort)));
-  onoff.SetConstantRate (DataRate (dataRate_ddos));
-  onoff.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=30]"));
-  onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
-
-  ApplicationContainer onOffUdpBotApps[nBot];
-  for (int k = 0; k < nBot; ++k)
+  if (enableDdos)
     {
-      onOffUdpBotApps[k] = onoff.Install (botNodes.Get (k));
-      onOffUdpBotApps[k].Start (Seconds (0.0));
-      onOffUdpBotApps[k].Stop (Seconds (maxSimulationTime));
+      OnOffHelper onoff (
+          "ns3::UdpSocketFactory",
+          Address (InetSocketAddress (serverInterfaces.GetAddress (0), udpSinkPort)));
+      onoff.SetConstantRate (DataRate (dataRate_ddos));
+      onoff.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=30]"));
+      onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
+
+      ApplicationContainer onOffUdpBotApps[nBot];
+      for (int k = 0; k < nBot; ++k)
+        {
+          onOffUdpBotApps[k] = onoff.Install (botNodes.Get (k));
+          onOffUdpBotApps[k].Start (Seconds (0.0));
+          onOffUdpBotApps[k].Stop (Seconds (maxSimulationTime));
+        }
     }
 
   // Build legitimate TCP sender application for wired and wireless
   BulkSendHelper bulkSend ("ns3::TcpSocketFactory",
                            InetSocketAddress (serverInterfaces.GetAddress (0), tcpSinkPort));
-  bulkSend.SetAttribute ("MaxBytes", UintegerValue (maxBulkBytes));
+  bulkSend.SetAttribute ("MaxBytes", UintegerValue (0));
 
   ApplicationContainer wiredBulkSendApps[nWiredclient];
   for (size_t i = 1; i < wiredClientNodes.GetN (); i++)
@@ -365,7 +373,7 @@ main (int argc, char *argv[])
   // Flow Monitor
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.Install (wiredClientNodes.Get (1));
-  Simulator::Schedule (Seconds (0 + 0.000001), &TraceThroughput, monitor);
+  Simulator::Schedule (Seconds (throughputTraceTime), &TraceThroughput, monitor);
 
   // Test pcap on server side
   ppS0R0.EnablePcapAll ("server");
