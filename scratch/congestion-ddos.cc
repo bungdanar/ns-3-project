@@ -425,10 +425,11 @@ main (int argc, char *argv[])
           flowString = "-flow" + std::to_string (index);
         }
 
-      firstRtt[index + 1] = true;
+      auto targetNodeId = wiredClientNodes.Get (1)->GetId ();
+      firstRtt[targetNodeId] = true;
 
       Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceRtt,
-                           prefix_file_name + ".dat", wiredClientNodes.Get (1)->GetId ());
+                           prefix_file_name + ".dat", targetNodeId);
     }
 
   // Flow Monitor
