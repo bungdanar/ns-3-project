@@ -21,6 +21,10 @@ Time prevTime = Seconds (0);
 static std::map<uint32_t, bool> firstRtt;
 static std::map<uint32_t, Ptr<OutputStreamWrapper>> rttStream;
 
+// Packet loss stuff
+static std::map<uint32_t, Ptr<OutputStreamWrapper>> nextTxStream;
+static std::map<uint32_t, Ptr<OutputStreamWrapper>> nextRxStream;
+
 // Naming the output directory using local system time
 static void
 handleOutputDirName ()
@@ -73,6 +77,45 @@ TraceRtt (std::string rtt_tr_file_name, uint32_t nodeId)
   Config::Connect ("/NodeList/" + std::to_string (nodeId) + "/$ns3::TcpL4Protocol/SocketList/0/RTT",
                    MakeCallback (&RttTracer));
 }
+
+// Packet loss stuff
+static void
+NextTxTracer (std::string context, [[maybe_unused]] SequenceNumber32 old, SequenceNumber32 nextTx)
+{
+  uint32_t nodeId = GetNodeIdFromContext (context);
+
+  *nextTxStream[nodeId]->GetStream ()
+      << Simulator::Now ().GetSeconds () << " " << nextTx << std::endl;
+}
+
+// static void
+// NextRxTracer (std::string context, [[maybe_unused]] SequenceNumber32 old, SequenceNumber32 nextRx)
+// {
+//   uint32_t nodeId = GetNodeIdFromContext (context);
+
+//   *nextRxStream[nodeId]->GetStream ()
+//       << Simulator::Now ().GetSeconds () << " " << nextRx << std::endl;
+// }
+
+static void
+TraceNextTx (std::string &next_tx_seq_file_name, uint32_t nodeId)
+{
+  AsciiTraceHelper ascii;
+  nextTxStream[nodeId] = ascii.CreateFileStream (next_tx_seq_file_name.c_str ());
+  Config::Connect ("/NodeList/" + std::to_string (nodeId) +
+                       "/$ns3::TcpL4Protocol/SocketList/0/NextTxSequence",
+                   MakeCallback (&NextTxTracer));
+}
+
+// static void
+// TraceNextRx (std::string &next_rx_seq_file_name, uint32_t nodeId)
+// {
+//   AsciiTraceHelper ascii;
+//   nextRxStream[nodeId] = ascii.CreateFileStream (next_rx_seq_file_name.c_str ());
+//   Config::Connect ("/NodeList/" + std::to_string (nodeId) +
+//                        "/$ns3::TcpL4Protocol/SocketList/1/RxBuffer/NextRxSequence",
+//                    MakeCallback (&NextRxTracer));
+// }
 
 // Calculate throughput
 static void
@@ -408,8 +451,7 @@ main (int argc, char *argv[])
   // Create a new directory to store the output of the program
   handleOutputDirName ();
 
-  // RTT stuff
-  std::string prefix_file_name = dir + "/rtt.dat";
+  // RTT and packet loss stuff
   uint16_t num_flows = 1;
   double start_time = 0.1;
   for (uint16_t index = 0; index < num_flows; index++)
@@ -424,7 +466,13 @@ main (int argc, char *argv[])
       firstRtt[targetNodeId] = true;
 
       Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceRtt,
-                           prefix_file_name, targetNodeId);
+                           dir + "/rtt.dat", targetNodeId);
+
+      Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceNextTx,
+                           dir + "/tx.dat", targetNodeId);
+
+      // Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceNextRx,
+      //                      dir + "/rx.dat", targetNodeId);
     }
 
   // Flow Monitor
