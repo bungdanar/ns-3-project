@@ -33,14 +33,6 @@ class TcpBbrCheckGainValuesTest;
 
 namespace ns3 {
 
-/**
- * \ingroup congestionOps
- *
- * \brief BBR congestion control algorithm
- * 
- * This class implement the BBR (Bottleneck Bandwidth and Round-trip propagation time)
- * congestion control type.
- */
 class TcpBbr : public TcpCongestionOps
 {
 public:
@@ -53,7 +45,7 @@ public:
    * \brief BBR uses an eight-phase cycle with the given pacing_gain value
    * in the BBR ProbeBW gain cycle.
    */
-  const static double PACING_GAIN_CYCLE [];
+  const static double PACING_GAIN_CYCLE[];
   /**
    * \brief Get the type ID.
    * \return the object TypeId
@@ -71,48 +63,39 @@ public:
    */
   TcpBbr (const TcpBbr &sock);
 
-  /**
-   * \brief BBR has the following 4 modes for deciding how fast to send:
-   */
-  typedef enum
-  {
-    BBR_STARTUP,        /**< Ramp up sending rate rapidly to fill pipe */
-    BBR_DRAIN,          /**< Drain any queue created during startup */
-    BBR_PROBE_BW,       /**< Discover, share bw: pace around estimated bw */
-    BBR_PROBE_RTT,      /**< Cut inflight to min to probe min_rtt */
+  /* BBR has the following modes for deciding how fast to send: */
+  typedef enum {
+    BBR_STARTUP, /* ramp up sending rate rapidly to fill pipe */
+    BBR_DRAIN, /* drain any queue created during startup */
+    BBR_PROBE_BW, /* discover, share bw: pace around estimated bw */
+    BBR_PROBE_RTT, /* cut inflight to min to probe min_rtt */
   } BbrMode_t;
 
-  typedef WindowedFilter<DataRate,
-                         MaxFilter<DataRate>,
-                         uint32_t,
-                         uint32_t>
-  MaxBandwidthFilter_t; //!< Definition of max bandwidth filter.
-
-  /**
-   * \brief Literal names of BBR mode for use in log messages
-   */
-  static const char* const BbrModeName[BBR_PROBE_RTT + 1];
+  typedef WindowedFilter<DataRate, MaxFilter<DataRate>, uint32_t, uint32_t> MaxBandwidthFilter_t;
 
   /**
    * Assign a fixed random variable stream number to the random variables
-   * used by this model.
+   * used by this model.  Return the number of streams (possibly zero) that
+   * have been assigned.
    *
    * \param stream first stream index to use
+   * \return the number of stream indices assigned by this model
    */
-  virtual void SetStream (uint32_t stream);
+  virtual int64_t AssignStreams (int64_t stream);
 
   virtual std::string GetName () const;
   virtual bool HasCongControl () const;
-  virtual void CongControl (Ptr<TcpSocketState> tcb,
-                            const TcpRateOps::TcpRateConnection &rc,
-                            const TcpRateOps::TcpRateSample &rs);
+  virtual void CongControl (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
   virtual void CongestionStateSet (Ptr<TcpSocketState> tcb,
                                    const TcpSocketState::TcpCongState_t newState);
-  virtual void CwndEvent (Ptr<TcpSocketState> tcb,
-                          const TcpSocketState::TcpCAEvent_t event);
-  virtual uint32_t GetSsThresh (Ptr<const TcpSocketState> tcb,
-                                uint32_t bytesInFlight);
+  virtual void CwndEvent (Ptr<TcpSocketState> tcb, const TcpSocketState::TcpCAEvent_t event);
+  virtual uint32_t GetSsThresh (Ptr<const TcpSocketState> tcb, uint32_t bytesInFlight);
   virtual Ptr<TcpCongestionOps> Fork ();
+
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation
+  void PrintToFile (Ptr<const TcpSocketState> tcb);
+  bool startPrintToFile{false};
+  //Imtiaz Mahmud's (imtiaz.tee@gmail.com) implementation ends
 
 protected:
   /**
@@ -130,9 +113,9 @@ protected:
    * \brief Checks whether to advance pacing gain in BBR_PROBE_BW state,
    *  and if allowed calls AdvanceCyclePhase ()
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs  rate sample
    */
-  void CheckCyclePhase (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void CheckCyclePhase (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Checks whether its time to enter BBR_DRAIN or BBR_PROBE_BW state
@@ -142,16 +125,15 @@ protected:
 
   /**
    * \brief Identifies whether pipe or BDP is already full
-   * \param rs rate sample.
+   * \param rs  rate sample
    */
-  void CheckFullPipe (const TcpRateOps::TcpRateSample &rs);
+  void CheckFullPipe (const struct RateSample *rs);
 
   /**
    * \brief This method handles the steps related to the ProbeRTT state
    * \param tcb the socket state.
-   * \param rs rate sample.
    */
-  void CheckProbeRTT (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void CheckProbeRTT (Ptr<TcpSocketState> tcb);
 
   /**
    * \brief Updates variables specific to BBR_DRAIN state
@@ -205,15 +187,14 @@ protected:
   /**
    * \brief Updates pacing rate if socket is restarting from idle state.
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs  rate sample
    */
-  void HandleRestartFromIdle (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void HandleRestartFromIdle (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Estimates the target value for congestion window
    * \param tcb  the socket state.
-   * \param gain cwnd gain.
-   * \return returns congestion window based on max bandwidth and min RTT.
+   * \param gain cwnd gain
    */
   uint32_t InFlight (Ptr<TcpSocketState> tcb, double gain);
 
@@ -236,24 +217,23 @@ protected:
   /**
    * \brief Checks whether to move to next value of pacing gain while in BBR_PROBE_BW.
    * \param tcb the socket state.
-   * \param rs  rate sample.
+   * \param rs  rate sample
    * \returns true if want to move to next value otherwise false.
    */
-  bool IsNextCyclePhase (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  bool IsNextCyclePhase (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Modulates congestion window in BBR_PROBE_RTT.
-   * \param tcb the socket state.
+   * \param tcb the socket state
    */
   void ModulateCwndForProbeRTT (Ptr<TcpSocketState> tcb);
 
   /**
    * \brief Modulates congestion window in CA_RECOVERY.
    * \param tcb the socket state.
-   * \param rs rate sample.
-   * \return true if congestion window is updated in CA_RECOVERY.
+   * \param rs  rate sample
    */
-  bool ModulateCwndForRecovery (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void ModulateCwndForRecovery (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Helper to restore the last-known good congestion window
@@ -273,12 +253,12 @@ protected:
    * \param tcb the socket state.
    * \param rs  rate sample
    */
-  void SetCwnd (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void SetCwnd (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Updates pacing rate based on network model.
    * \param tcb the socket state.
-   * \param gain pacing gain.
+   * \param gain pacing gain
    */
   void SetPacingRate (Ptr<TcpSocketState> tcb, double gain);
 
@@ -291,30 +271,30 @@ protected:
   /**
    * \brief Updates maximum bottleneck.
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs rate sample
    */
-  void UpdateBtlBw (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void UpdateBtlBw (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Updates control parameters congestion windowm, pacing rate, send quantum.
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs rate sample
    */
-  void UpdateControlParameters (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void UpdateControlParameters (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Updates BBR network model (Maximum bandwidth and minimum RTT).
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs rate sample
    */
-  void UpdateModelAndState (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void UpdateModelAndState (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Updates round counting related variables.
    * \param tcb the socket state.
-   * \param rs rate sample.
+   * \param rs rate sample
    */
-  void UpdateRound (Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+  void UpdateRound (Ptr<TcpSocketState> tcb, const struct RateSample *rs);
 
   /**
    * \brief Updates minimum RTT.
@@ -335,61 +315,51 @@ protected:
   void SetBbrState (BbrMode_t state);
 
   /**
-  * \brief Find Cwnd increment based on ack aggregation.
-  * \return uint32_t aggregate cwnd.
-  */
-  uint32_t AckAggregationCwnd();
-
-  /**
-  * \brief Estimates max degree of aggregation.
-  * \param tcb the socket state.
-  * \param rs rate sample.
-  */
-  void UpdateAckAggregation(Ptr<TcpSocketState> tcb, const TcpRateOps::TcpRateSample &rs);
+   * \brief Maps mode into string.
+   * \return string translation of mode value.
+   */
+  std::string WhichState (BbrMode_t state) const;
 
 private:
-  BbrMode_t   m_state        {BbrMode_t::BBR_STARTUP};           //!< Current state of BBR state machine
-  MaxBandwidthFilter_t   m_maxBwFilter;                          //!< Maximum bandwidth filter
-  uint32_t    m_bandwidthWindowLength       {0};                 //!< A constant specifying the length of the BBR.BtlBw max filter window, default 10 packet-timed round trips.
-  double      m_pacingGain                  {0};                 //!< The dynamic pacing gain factor
-  double      m_cWndGain                    {0};                 //!< The dynamic congestion window gain factor
-  double      m_highGain                    {0};                 //!< A constant specifying highest gain factor, default is 2.89
-  bool        m_isPipeFilled                {false};             //!< A boolean that records whether BBR has filled the pipe
-  uint32_t    m_minPipeCwnd                 {0};                 //!< The minimal congestion window value BBR tries to target, default 4 Segment size
-  uint32_t    m_roundCount                  {0};                 //!< Count of packet-timed round trips
-  bool        m_roundStart                  {false};             //!< A boolean that BBR sets to true once per packet-timed round trip
-  uint32_t    m_nextRoundDelivered          {0};                 //!< Denotes the end of a packet-timed round trip
-  Time        m_probeRttDuration            {MilliSeconds (200)};//!< A constant specifying the minimum duration for which ProbeRTT state, default 200 millisecs
-  Time        m_probeRtPropStamp            {Seconds (0)};       //!< The wall clock time at which the current BBR.RTProp sample was obtained.
-  Time        m_probeRttDoneStamp           {Seconds (0)};       //!< Time to exit from BBR_PROBE_RTT state
-  bool        m_probeRttRoundDone           {false};             //!< True when it is time to exit BBR_PROBE_RTT
-  bool        m_packetConservation          {false};             //!< Enable/Disable packet conservation mode
-  uint32_t    m_priorCwnd                   {0};                 //!< The last-known good congestion window
-  bool        m_idleRestart                 {false};             //!< When restarting from idle, set it true
-  uint32_t    m_targetCWnd                  {0};                 //!< Target value for congestion window, adapted to the estimated BDP
-  DataRate    m_fullBandwidth               {0};                 //!< Value of full bandwidth recorded
-  uint32_t    m_fullBandwidthCount          {0};                 //!< Count of full bandwidth recorded consistently
-  Time        m_rtProp                      {Time::Max ()};      //!< Estimated two-way round-trip propagation delay of the path, estimated from the windowed minimum recent round-trip delay sample.
-  uint32_t    m_sendQuantum                 {0};                 //!< The maximum size of a data aggregate scheduled and transmitted together
-  Time        m_cycleStamp                  {Seconds (0)};       //!< Last time gain cycle updated
-  uint32_t    m_cycleIndex                  {0};                 //!< Current index of gain cycle
-  bool        m_rtPropExpired               {false};             //!< A boolean recording whether the BBR.RTprop has expired
-  Time        m_rtPropFilterLen             {Seconds (10)};      //!< A constant specifying the length of the RTProp min filter window, default 10 secs.
-  Time        m_rtPropStamp                 {Seconds (0)};       //!< The wall clock time at which the current BBR.RTProp sample was obtained
-  bool        m_isInitialized               {false};             //!< Set to true after first time initializtion variables
-  Ptr<UniformRandomVariable> m_uv           {nullptr};           //!< Uniform Random Variable
-  uint64_t    m_delivered                   {0};                 //!< The total amount of data in bytes delivered so far
-  uint32_t    m_appLimited                  {0};                 //!< The index of the last transmitted packet marked as application-limited
-  uint32_t    m_txItemDelivered             {0};                 //!< The number of bytes already delivered at the time of new packet transmission
-  uint32_t    m_extraAckedGain              {1};                 //!< Gain factor for adding extra ack to cwnd
-  uint32_t    m_extraAcked [2]              {0, 0};              //!< Maximum excess data acked in epoch
-  uint32_t    m_extraAckedWinRtt            {0};                 //!< Age of extra acked in rtt
-  uint32_t    m_extraAckedWinRttLength      {5};                 //!< Window length of extra acked window
-  uint32_t    m_ackEpochAckedResetThresh    {1 << 17};           //!< Max allowed val for m_ackEpochAcked, after which sampling epoch is reset 
-  uint32_t    m_extraAckedIdx               {0};                 //!< Current index in extra acked array
-  Time        m_ackEpochTime                {Seconds(0)};        //!< Starting of ACK sampling epoch time
-  uint32_t    m_ackEpochAcked               {0};                 //!< Bytes ACked in sampling epoch
-  bool        m_hasSeenRtt                  {false};             //!< Have we seen RTT sample yet?
+  BbrMode_t m_state{BbrMode_t::BBR_STARTUP}; //!< Current state of BBR state machine
+  MaxBandwidthFilter_t m_maxBwFilter; //!< Maximum bandwidth filter
+  uint32_t m_bandwidthWindowLength{
+      0}; //!< A constant specifying the length of the BBR.BtlBw max filter window, default 10 packet-timed round trips.
+  double m_pacingGain{0}; //!< The dynamic pacing gain factor
+  double m_cWndGain{0}; //!< The dynamic congestion window gain factor
+  double m_highGain{0}; //!< A constant specifying highest gain factor, default is 2.89
+  bool m_isPipeFilled{false}; //!< A boolean that records whether BBR has filled the pipe
+  uint32_t m_minPipeCwnd{
+      0}; //!< The minimal congestion window value BBR tries to target, default 4 Segment size
+  uint32_t m_roundCount{0}; //!< Count of packet-timed round trips
+  bool m_roundStart{false}; //!< A boolean that BBR sets to true once per packet-timed round trip
+  uint32_t m_nextRoundDelivered{0}; //!< Denotes the end of a packet-timed round trip
+  Time m_probeRttDuration{MilliSeconds (
+      200)}; //!< A constant specifying the minimum duration for which ProbeRTT state, default 200 millisecs
+  Time m_probeRtPropStamp{
+      Seconds (0)}; //!< The wall clock time at which the current BBR.RTProp sample was obtained.
+  Time m_probeRttDoneStamp{Seconds (0)}; //!< Time to exit from BBR_PROBE_RTT state
+  bool m_probeRttRoundDone{false}; //!< True when it is time to exit BBR_PROBE_RTT
+  bool m_packetConservation{false}; //!<
+  uint32_t m_priorCwnd{0}; //!< The last-known good congestion window
+  bool m_idleRestart{false}; //!< When restarting from idle, set it true
+  uint32_t m_targetCWnd{0}; //!< Target value for congestion window, adapted to the estimated BDP
+  DataRate m_fullBandwidth{0}; //!< Value of full bandwidth recorded
+  uint32_t m_fullBandwidthCount{0}; //!< Count of full bandwidth recorded consistently
+  Time m_rtProp{
+      Time::
+          Max ()}; //!< Estimated two-way round-trip propagation delay of the path, estimated from the windowed minimum recent round-trip delay sample.
+  uint32_t m_sendQuantum{
+      0}; //!< The maximum size of a data aggregate scheduled and transmitted together
+  Time m_cycleStamp{Seconds (0)}; //!< Last time gain cycle updated
+  uint32_t m_cycleIndex{0}; //!< Current index of gain cycle
+  bool m_rtPropExpired{false}; //!< A boolean recording whether the BBR.RTprop has expired
+  Time m_rtPropFilterLen{Seconds (
+      10)}; //!< A constant specifying the length of the RTProp min filter window, default 10 secs.
+  Time m_rtPropStamp{
+      Seconds (0)}; //!< The wall clock time at which the current BBR.RTProp sample was obtained
+  bool m_isInitialized{false}; //!< Set to true after first time initializtion variables
+  Ptr<UniformRandomVariable> m_uv{nullptr}; //!< Uniform Random Variable
 };
 
 } // namespace ns3
