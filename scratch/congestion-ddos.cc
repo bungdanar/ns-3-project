@@ -409,12 +409,7 @@ main (int argc, char *argv[])
   handleOutputDirName ();
 
   // RTT stuff
-  std::string prefix_file_name = "rtt";
-  if (enableDdos)
-    {
-      prefix_file_name = prefix_file_name + "-with-dos";
-    }
-
+  std::string prefix_file_name = dir + "/rtt.dat";
   uint16_t num_flows = 1;
   double start_time = 0.1;
   for (uint16_t index = 0; index < num_flows; index++)
@@ -429,7 +424,7 @@ main (int argc, char *argv[])
       firstRtt[targetNodeId] = true;
 
       Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceRtt,
-                           prefix_file_name + ".dat", targetNodeId);
+                           prefix_file_name, targetNodeId);
     }
 
   // Flow Monitor
