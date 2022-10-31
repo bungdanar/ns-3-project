@@ -88,14 +88,14 @@ NextTxTracer (std::string context, [[maybe_unused]] SequenceNumber32 old, Sequen
       << Simulator::Now ().GetSeconds () << " " << nextTx << std::endl;
 }
 
-// static void
-// NextRxTracer (std::string context, [[maybe_unused]] SequenceNumber32 old, SequenceNumber32 nextRx)
-// {
-//   uint32_t nodeId = GetNodeIdFromContext (context);
+static void
+NextRxTracer (std::string context, [[maybe_unused]] SequenceNumber32 old, SequenceNumber32 nextRx)
+{
+  uint32_t nodeId = GetNodeIdFromContext (context);
 
-//   *nextRxStream[nodeId]->GetStream ()
-//       << Simulator::Now ().GetSeconds () << " " << nextRx << std::endl;
-// }
+  *nextRxStream[nodeId]->GetStream ()
+      << Simulator::Now ().GetSeconds () << " " << nextRx << std::endl;
+}
 
 static void
 TraceNextTx (std::string &next_tx_seq_file_name, uint32_t nodeId)
@@ -107,15 +107,15 @@ TraceNextTx (std::string &next_tx_seq_file_name, uint32_t nodeId)
                    MakeCallback (&NextTxTracer));
 }
 
-// static void
-// TraceNextRx (std::string &next_rx_seq_file_name, uint32_t nodeId)
-// {
-//   AsciiTraceHelper ascii;
-//   nextRxStream[nodeId] = ascii.CreateFileStream (next_rx_seq_file_name.c_str ());
-//   Config::Connect ("/NodeList/" + std::to_string (nodeId) +
-//                        "/$ns3::TcpL4Protocol/SocketList/1/RxBuffer/NextRxSequence",
-//                    MakeCallback (&NextRxTracer));
-// }
+static void
+TraceNextRx (std::string &next_rx_seq_file_name, uint32_t nodeId)
+{
+  AsciiTraceHelper ascii;
+  nextRxStream[nodeId] = ascii.CreateFileStream (next_rx_seq_file_name.c_str ());
+  Config::Connect ("/NodeList/" + std::to_string (nodeId) +
+                       "/$ns3::TcpL4Protocol/SocketList/1/RxBuffer/NextRxSequence",
+                   MakeCallback (&NextRxTracer));
+}
 
 // Calculate throughput
 static void
@@ -463,6 +463,7 @@ main (int argc, char *argv[])
         }
 
       auto targetNodeId = wiredClientNodes.Get (1)->GetId ();
+      auto serverNodeId = serverNode.Get (0)->GetId ();
       firstRtt[targetNodeId] = true;
 
       Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceRtt,
@@ -471,8 +472,8 @@ main (int argc, char *argv[])
       Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceNextTx,
                            dir + "/tx.dat", targetNodeId);
 
-      // Simulator::Schedule (Seconds (start_time * index + throughputTraceTime), &TraceNextRx,
-      //                      dir + "/rx.dat", targetNodeId);
+      Simulator::Schedule (Seconds (start_time * index + 0.1), &TraceNextRx, dir + "/rx.dat",
+                           serverNodeId);
     }
 
   // Flow Monitor
