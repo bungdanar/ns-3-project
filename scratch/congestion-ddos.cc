@@ -341,8 +341,11 @@ main (int argc, char *argv[])
   mobilityHelper.Install (botNodes);
 
   // Set random walk for wifiSta
-  mobilityHelper.SetMobilityModel ("ns3::RandomWalk2dMobilityModel", "Bounds",
-                                   RectangleValue (Rectangle (-50, 50, -50, 50)));
+  double rectSize = 50 * nBot;
+
+  mobilityHelper.SetMobilityModel (
+      "ns3::RandomWalk2dMobilityModel", "Bounds",
+      RectangleValue (Rectangle (-rectSize, rectSize, -rectSize, rectSize)));
   mobilityHelper.Install (wifiStaNodes);
 
   // Just some logging
