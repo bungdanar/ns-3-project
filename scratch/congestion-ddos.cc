@@ -387,12 +387,40 @@ main (int argc, char *argv[])
           onoff.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=30]"));
           onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
 
-          ApplicationContainer onOffUdpBotApps[nBot];
+          ApplicationContainer onOffTcpBotApps[nBot];
           for (uint32_t k = 0; k < nBot; ++k)
             {
-              onOffUdpBotApps[k] = onoff.Install (botNodes.Get (k));
-              onOffUdpBotApps[k].Start (Seconds (0.0));
-              onOffUdpBotApps[k].Stop (Seconds (maxSimulationTime));
+              onOffTcpBotApps[k] = onoff.Install (botNodes.Get (k));
+              onOffTcpBotApps[k].Start (Seconds (0.0));
+              onOffTcpBotApps[k].Stop (Seconds (maxSimulationTime));
+            }
+        }
+      else if (attackType == "http")
+        {
+          std::cout << "Simulate with DDoS HTTP flood attack..." << std::endl;
+
+          ThreeGppHttpServerHelper httpServerHelper (serverInterfaces.GetAddress (0));
+          ApplicationContainer httpServerApps = httpServerHelper.Install (serverNode.Get (0));
+          Ptr<ThreeGppHttpServer> httpServer =
+              httpServerApps.Get (0)->GetObject<ThreeGppHttpServer> ();
+
+          // Setup HTTP variables for the server
+          PointerValue varPtr;
+          httpServer->GetAttribute ("Variables", varPtr);
+          Ptr<ThreeGppHttpVariables> httpVariables = varPtr.Get<ThreeGppHttpVariables> ();
+          httpVariables->SetMainObjectSizeMean (102400); // 100kB
+          httpVariables->SetMainObjectSizeStdDev (40960); // 40kB
+
+          ThreeGppHttpClientHelper httpClientHelper (serverInterfaces.GetAddress (0));
+          ApplicationContainer httpBotApps[nBot];
+          for (uint32_t k = 0; k < nBot; k++)
+            {
+              httpBotApps[k] = httpClientHelper.Install (botNodes.Get (k));
+              // Ptr<ThreeGppHttpClient> httpClient =
+              //     httpBotApps->Get (k)->GetObject<ThreeGppHttpClient> ();
+
+              httpBotApps[k].Start (Seconds (0.0));
+              httpBotApps[k].Stop (Seconds (maxSimulationTime));
             }
         }
       else
