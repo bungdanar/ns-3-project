@@ -382,7 +382,7 @@ main (int argc, char *argv[])
       onoff.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
 
       ApplicationContainer onOffUdpBotApps[nBot];
-      for (int k = 0; k < nBot; ++k)
+      for (uint32_t k = 0; k < nBot; ++k)
         {
           onOffUdpBotApps[k] = onoff.Install (botNodes.Get (k));
           onOffUdpBotApps[k].Start (Seconds (0.0));
